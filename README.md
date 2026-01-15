@@ -260,7 +260,7 @@ SQL files should:
 
 ### Data Warehouse Ingestion
 
-ora2csv is commonly used for periodic incremental data export to data warehouses. See [Data Warehouse Ingestion Guide](docs/datawarehouse-use-case.md) for:
+ora2csv is commonly used for periodic incremental data export to data warehouses. See [Data Warehouse Ingestion Guide](docs/dwh-use-case.md) for:
 
 - Architecture patterns (Oracle → ora2csv → S3 → Snowflake/BigQuery)
 - Incremental sync setup

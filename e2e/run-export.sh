@@ -19,7 +19,7 @@ if [[ ! -f "$BINARY" ]]; then
 fi
 
 # Set environment variables for E2E database
-export ORASYSTEMPASS="ora2csv_pass"
+export ORA2CSV_DB_PASSWORD="ora2csv_pass"
 export ORA2CSV_DB_HOST="localhost"
 export ORA2CSV_DB_PORT="1521"
 export ORA2CSV_DB_SERVICE="ORCL"

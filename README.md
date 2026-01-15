@@ -34,12 +34,16 @@ Download the latest release from [Releases](https://github.com/koltyakov/ora2csv
 
 ## Quick Start
 
-1. **Set database password** (matches bash script convention):
+1. **Set database connection** via environment variables or flags:
+
    ```bash
-   export ORASYSTEMPASS=your_password
+   export ORA2CSV_DB_PASSWORD=your_password
+   export ORA2CSV_DB_HOST=your_db_host
+   export ORA2CSV_DB_USER=your_db_user
    ```
 
 2. **Create state.json** (see Configuration below):
+
    ```json
    [
      {
@@ -51,6 +55,7 @@ Download the latest release from [Releases](https://github.com/koltyakov/ora2csv
    ```
 
 3. **Create SQL file** for each entity in `sql/` directory:
+
    ```sql
    -- sql/crm.products.sql
    SELECT
@@ -61,7 +66,7 @@ Download the latest release from [Releases](https://github.com/koltyakov/ora2csv
    FROM crm.products
    WHERE updated >= TO_DATE(:startDate, 'YYYY-MM-DD"T"HH24:MI:SS')
      AND updated < TO_DATE(:tillDate, 'YYYY-MM-DD"T"HH24:MI:SS')
-   ORDER BY updated ASC;
+   ORDER BY updated ASC
    ```
 
 4. **Run export**:
@@ -73,16 +78,16 @@ Download the latest release from [Releases](https://github.com/koltyakov/ora2csv
 
 ### Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `ORASYSTEMPASS` | Database password | *required* |
-| `ORA2CSV_DB_HOST` | Database host | `dbserver` |
-| `ORA2CSV_DB_PORT` | Database port | `1521` |
-| `ORA2CSV_DB_SERVICE` | Database service name | `ORCL` |
-| `ORA2CSV_DB_USER` | Database user | `system` |
-| `ORA2CSV_STATE_FILE` | Path to state.json | `./state.json` |
-| `ORA2CSV_SQL_DIR` | Path to SQL files | `./sql` |
-| `ORA2CSV_EXPORT_DIR` | Path for output CSVs | `./export` |
+| Variable              | Description           | Default        |
+| --------------------- | --------------------- | -------------- |
+| `ORA2CSV_DB_PASSWORD` | Database password     | _required_     |
+| `ORA2CSV_DB_HOST`     | Database host         | `dbserver`     |
+| `ORA2CSV_DB_PORT`     | Database port         | `1521`         |
+| `ORA2CSV_DB_SERVICE`  | Database service name | `ORCL`         |
+| `ORA2CSV_DB_USER`     | Database user         | `system`       |
+| `ORA2CSV_STATE_FILE`  | Path to state.json    | `./state.json` |
+| `ORA2CSV_SQL_DIR`     | Path to SQL files     | `./sql`        |
+| `ORA2CSV_EXPORT_DIR`  | Path for output CSVs  | `./export`     |
 
 ### Command Flags
 
@@ -143,6 +148,7 @@ ora2csv export
 ```
 
 Dry run (validate only):
+
 ```bash
 ora2csv export --dry-run
 ```
@@ -156,6 +162,7 @@ ora2csv validate
 ```
 
 With database connection test:
+
 ```bash
 ora2csv validate --test-connection
 ```
@@ -176,20 +183,25 @@ ora2csv validate --test-connection
 SQL files should:
 
 1. Use bind variables `:startDate` and `:tillDate` for time filtering:
+
    ```sql
    WHERE updated >= TO_DATE(:startDate, 'YYYY-MM-DD"T"HH24:MI:SS')
      AND updated < TO_DATE(:tillDate, 'YYYY-MM-DD"T"HH24:MI:SS')
    ```
 
 2. Order by timestamp for consistent streaming:
+
    ```sql
    ORDER BY updated ASC
    ```
 
 3. Format timestamps as ISO 8601:
+
    ```sql
    TO_CHAR(updated, 'YYYY-MM-DD"T"HH24:MI:SS') as updated
    ```
+
+4. **No trailing semicolon** - Oracle's programmatic interface does not accept SQL statements terminated with semicolons
 
 ## Output
 
@@ -230,6 +242,14 @@ SQL files should:
 ### Prerequisites
 
 - Go 1.21 or later
+
+### E2E Testing
+
+For local testing with an Oracle database, see the [e2e/](e2e/) directory. It includes:
+
+- Docker Compose setup with Oracle XE
+- Test data generation scripts
+- Example SQL queries and state files
 
 ### Building
 

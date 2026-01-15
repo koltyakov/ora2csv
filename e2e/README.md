@@ -63,7 +63,7 @@ cd e2e
 Or with direct flags:
 
 ```bash
-export ORASYSTEMPASS=ora2csv_pass
+export ORA2CSV_DB_PASSWORD=ora2csv_pass
 ../bin/ora2csv export \
   --db-host localhost \
   --db-service ORCL \
@@ -196,7 +196,7 @@ ORDER BY updated ASC;
 
 ## Test Data Schema
 
-### appchema.products
+### crm.products
 - `id` - Primary key
 - `name`, `sku`, `category` - Product info
 - `price`, `quantity` - Numeric fields
@@ -286,13 +286,13 @@ GRANT SELECT ON archive.entity TO ora2csv;
 
 The `run-export.sh` script sets these automatically:
 
-| Variable | Value |
-|----------|-------|
-| `ORASYSTEMPASS` | `ora2csv_pass` |
-| `ORA2CSV_DB_HOST` | `localhost` |
-| `ORA2CSV_DB_PORT` | `1521` |
-| `ORA2CSV_DB_SERVICE` | `ORCL` |
-| `ORA2CSV_DB_USER` | `ora2csv` |
+| Variable               | Value          |
+| ---------------------- | -------------- |
+| `ORA2CSV_DB_PASSWORD`  | `ora2csv_pass` |
+| `ORA2CSV_DB_HOST`      | `localhost`    |
+| `ORA2CSV_DB_PORT`      | `1521`         |
+| `ORA2CSV_DB_SERVICE`   | `ORCL`         |
+| `ORA2CSV_DB_USER`      | `ora2csv`      |
 
 Override as needed:
 

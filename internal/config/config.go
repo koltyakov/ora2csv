@@ -11,25 +11,25 @@ import (
 // Config holds all configuration for the application
 type Config struct {
 	// Database connection
-	DBUser     string
-	DBPassword string
-	DBHost     string
-	DBPort     int
-	DBService  string
+	DBUser     string `mapstructure:"db_user"`
+	DBPassword string `mapstructure:"db_password"`
+	DBHost     string `mapstructure:"db_host"`
+	DBPort     int    `mapstructure:"db_port"`
+	DBService  string `mapstructure:"db_service"`
 
 	// Paths
-	StateFile string
-	SQLDir    string
-	ExportDir string
+	StateFile string `mapstructure:"state_file"`
+	SQLDir    string `mapstructure:"sql_dir"`
+	ExportDir string `mapstructure:"export_dir"`
 
 	// Behavior
-	DefaultDaysBack int
-	DryRun          bool
-	Verbose         bool
+	DefaultDaysBack int  `mapstructure:"days_back"`
+	DryRun          bool `mapstructure:"dry_run"`
+	Verbose         bool `mapstructure:"verbose"`
 
 	// Timeouts
-	ConnectTimeout time.Duration
-	QueryTimeout   time.Duration
+	ConnectTimeout time.Duration `mapstructure:"-"`
+	QueryTimeout   time.Duration `mapstructure:"-"`
 }
 
 // Load creates a new Config from environment variables and defaults
@@ -112,9 +112,10 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// ConnectionString returns the Oracle connection string for go-ora (with credentials)
+// ConnectionString returns the Oracle connection string for go-ora v2
+// Format: oracle://user:password@host:port/service
 func (c *Config) ConnectionString() string {
-	return fmt.Sprintf("%s/%s@%s:%d/%s", c.DBUser, c.DBPassword, c.DBHost, c.DBPort, c.DBService)
+	return fmt.Sprintf("oracle://%s:%s@%s:%d/%s", c.DBUser, c.DBPassword, c.DBHost, c.DBPort, c.DBService)
 }
 
 // EnsureDirs creates necessary directories if they don't exist

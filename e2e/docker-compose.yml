@@ -1,0 +1,29 @@
+# Docker Compose for Oracle XE E2E Testing
+# Uses gvenzl/oracle-xe - a lightweight Oracle Database Express Edition
+#
+# Start: docker compose up -d
+# Stop:  docker compose down
+# Logs:  docker compose logs -f oracle
+
+name: ora2csv-e2e-oracle
+
+services:
+  oracle:
+    image: gvenzl/oracle-xe:21-slim-faststart
+    container_name: ora2csv-oracle
+    environment:
+      ORACLE_PASSWORD: ora2csv_pass
+      ORACLE_DATABASE: ORCL
+    ports:
+      - "1521:1521"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+      - ./scripts/01-init-schema.sql:/docker-entrypoint-initdb.d/01-init-schema.sql:ro
+volumes:
+  oracle-data:

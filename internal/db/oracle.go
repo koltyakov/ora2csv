@@ -37,10 +37,10 @@ func New(cfg *Config) *OracleDB {
 }
 
 // ConnectString creates a new OracleDB and connects using a connection string
-// The connection string should be in format: user/password@host:port/service
-// or: user/password@//host:port/service
+// The connection string should be in URL format: oracle://user:password@host:port/service
+// User and password parameters are ignored if already in connection string
 func ConnectString(ctx context.Context, connString, user, password string, timeout time.Duration) (*OracleDB, error) {
-	// If connString is empty, we can't connect
+	// Validate connection string
 	if connString == "" {
 		return nil, fmt.Errorf("empty connection string")
 	}

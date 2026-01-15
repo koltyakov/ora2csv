@@ -42,3 +42,8 @@ tmp/
 *.log
 state.json
 !state.json.example
+
+# E2E testing
+e2e/export/
+e2e/*.log
+!e2e/state.json

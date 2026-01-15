@@ -113,8 +113,8 @@ func loadConfig(cmd *cobra.Command) *config.Config {
 	v.SetDefault("days_back", config.DefaultDaysBack)
 	v.SetDefault("dry_run", false)
 	v.SetDefault("verbose", false)
-	v.SetDefault("connect_timeout", int(config.DefaultConnectTimeoutSecs))
-	v.SetDefault("query_timeout", int(config.DefaultQueryTimeoutSecs))
+	v.SetDefault("connect_timeout", config.DefaultConnectTimeoutSecs*time.Second)
+	v.SetDefault("query_timeout", config.DefaultQueryTimeoutSecs*time.Second)
 
 	// Unmarshal to config
 	result := &config.Config{}
@@ -124,8 +124,8 @@ func loadConfig(cmd *cobra.Command) *config.Config {
 	}
 
 	// Set durations from duration flags
-	result.ConnectTimeout = v.GetDuration("connect-timeout")
-	result.QueryTimeout = v.GetDuration("query-timeout")
+	result.ConnectTimeout = v.GetDuration("connect_timeout")
+	result.QueryTimeout = v.GetDuration("query_timeout")
 
 	return result
 }

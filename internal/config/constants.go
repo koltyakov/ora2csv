@@ -4,7 +4,7 @@ const (
 	// Default values
 	DefaultDBHost             = "dbserver"
 	DefaultDBPort             = 1521
-	DefaultDBService          = "orclpdb"
+	DefaultDBService          = "ORCL"
 	DefaultDBUser             = "system"
 	DefaultStateFile          = "./state.json"
 	DefaultSQLDir             = "./sql"

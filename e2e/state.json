@@ -1,0 +1,22 @@
+[
+  {
+    "entity": "crm.products",
+    "lastRunTime": "2025-01-01T00:00:00",
+    "active": true
+  },
+  {
+    "entity": "crm.orders",
+    "lastRunTime": "2025-01-01T00:00:00",
+    "active": true
+  },
+  {
+    "entity": "crm.customers",
+    "lastRunTime": "2025-01-01T00:00:00",
+    "active": true
+  },
+  {
+    "entity": "archive.entity",
+    "lastRunTime": "2025-01-01T00:00:00",
+    "active": false
+  }
+]

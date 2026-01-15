@@ -43,7 +43,7 @@ Download the latest release from [Releases](https://github.com/koltyakov/ora2csv
    ```json
    [
      {
-       "entity": "appschema.products",
+       "entity": "crm.products",
        "lastRunTime": "2025-01-14T00:00:00",
        "active": true
      }
@@ -52,13 +52,13 @@ Download the latest release from [Releases](https://github.com/koltyakov/ora2csv
 
 3. **Create SQL file** for each entity in `sql/` directory:
    ```sql
-   -- sql/appschema.products.sql
+   -- sql/crm.products.sql
    SELECT
      id,
      name,
      sku,
      TO_CHAR(updated, 'YYYY-MM-DD"T"HH24:MI:SS') as updated
-   FROM appschema.products
+   FROM crm.products
    WHERE updated >= TO_DATE(:startDate, 'YYYY-MM-DD"T"HH24:MI:SS')
      AND updated < TO_DATE(:tillDate, 'YYYY-MM-DD"T"HH24:MI:SS')
    ORDER BY updated ASC;
@@ -78,7 +78,7 @@ Download the latest release from [Releases](https://github.com/koltyakov/ora2csv
 | `ORASYSTEMPASS` | Database password | *required* |
 | `ORA2CSV_DB_HOST` | Database host | `dbserver` |
 | `ORA2CSV_DB_PORT` | Database port | `1521` |
-| `ORA2CSV_DB_SERVICE` | Database service name | `orclpdb` |
+| `ORA2CSV_DB_SERVICE` | Database service name | `ORCL` |
 | `ORA2CSV_DB_USER` | Database user | `system` |
 | `ORA2CSV_STATE_FILE` | Path to state.json | `./state.json` |
 | `ORA2CSV_SQL_DIR` | Path to SQL files | `./sql` |
@@ -92,7 +92,7 @@ ora2csv export [flags]
 Flags:
   --db-host string          Database host (default "dbserver")
   --db-port int             Database port (default 1521)
-  --db-service string       Database service name (default "orclpdb")
+  --db-service string       Database service name (default "ORCL")
   --db-user string          Database user (default "system")
   --state-file string       Path to state.json (default "./state.json")
   --sql-dir string          Path to SQL directory (default "./sql")
@@ -111,12 +111,12 @@ Flags:
 ```json
 [
   {
-    "entity": "appschema.products",
+    "entity": "crm.products",
     "lastRunTime": "2025-01-14T00:00:00",
     "active": true
   },
   {
-    "entity": "appschema.orders",
+    "entity": "crm.orders",
     "lastRunTime": "2025-01-14T10:00:00",
     "active": true
   },
@@ -211,12 +211,12 @@ SQL files should:
 ```
 [2025-01-14 16:30:00] Starting ora2csv v1.0.0 (built: 2025-01-14T16:00:00Z)
 [2025-01-14 16:30:00] Loaded state file: ./state.json (3 entities, 2 active)
-[2025-01-14 16:30:00] Connecting to database: system@dbserver:1521/orclpdb
+[2025-01-14 16:30:00] Connecting to database: system@dbserver:1521/ORCL
 [2025-01-14 16:30:01] Database connection established
 [2025-01-14 16:30:01] Using till date for all entities: 2025-01-14T16:30:01
-[2025-01-14 16:30:01] [appschema.products] Processing entity: appschema.products
-[2025-01-14 16:30:01] [appschema.products] Start date: 2025-01-14T00:00:00
-[2025-01-14 16:30:02] [appschema.products] Exported 1234 rows to: export/appschema.products__2025-01-14T00-00-00.csv
+[2025-01-14 16:30:01] [crm.products] Processing entity: crm.products
+[2025-01-14 16:30:01] [crm.products] Start date: 2025-01-14T00:00:00
+[2025-01-14 16:30:02] [crm.products] Exported 1234 rows to: export/crm.products__2025-01-14T00-00-00.csv
 ==================================================
 [2025-01-14 16:30:02] Export completed successfully
 [2025-01-14 16:30:02] Total duration: 0m 1s

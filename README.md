@@ -237,6 +237,16 @@ SQL files should:
 ==================================================
 ```
 
+## Use Cases
+
+### Data Warehouse Ingestion
+
+ora2csv is commonly used for periodic incremental data export to data warehouses. See [Data Warehouse Ingestion Guide](docs/datawarehouse-use-case.md) for:
+- Architecture patterns (Oracle → ora2csv → S3 → Snowflake/BigQuery)
+- Incremental sync setup
+- SQL file design for merge operations
+- Integration examples with dbt, Airflow, and other orchestration tools
+
 ## Development
 
 ### Prerequisites

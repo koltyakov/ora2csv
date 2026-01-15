@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	"github.com/koltyakov/ora2csv/internal/config"
 	"github.com/koltyakov/ora2csv/internal/db"
@@ -67,69 +66,6 @@ func init() {
 	validateCmd.Flags().Bool("test-connection", false, "Test database connection")
 }
 
-// loadConfig loads configuration from flags and environment variables
-func loadConfig(cmd *cobra.Command) *config.Config {
-	v := viper.New()
-
-	// Bind flags to viper
-	flags := []struct {
-		name string
-		key  string
-	}{
-		{"db-host", "db_host"},
-		{"db-port", "db_port"},
-		{"db-service", "db_service"},
-		{"db-user", "db_user"},
-		{"state-file", "state_file"},
-		{"sql-dir", "sql_dir"},
-		{"export-dir", "export_dir"},
-		{"days-back", "days_back"},
-		{"dry-run", "dry_run"},
-		{"verbose", "verbose"},
-		{"connect-timeout", "connect_timeout"},
-		{"query-timeout", "query_timeout"},
-	}
-
-	for _, f := range flags {
-		flag := cmd.Flags().Lookup(f.name)
-		if flag != nil {
-			_ = v.BindPFlag(f.key, flag)
-		}
-	}
-
-	// Enable environment variable reading
-	v.SetEnvPrefix(config.EnvPrefix)
-	v.AutomaticEnv()
-	v.BindEnv("db_password", config.EnvDBPassword)
-
-	// Set defaults from config package
-	v.SetDefault("db_host", config.DefaultDBHost)
-	v.SetDefault("db_port", config.DefaultDBPort)
-	v.SetDefault("db_service", config.DefaultDBService)
-	v.SetDefault("db_user", config.DefaultDBUser)
-	v.SetDefault("state_file", config.DefaultStateFile)
-	v.SetDefault("sql_dir", config.DefaultSQLDir)
-	v.SetDefault("export_dir", config.DefaultExportDir)
-	v.SetDefault("days_back", config.DefaultDaysBack)
-	v.SetDefault("dry_run", false)
-	v.SetDefault("verbose", false)
-	v.SetDefault("connect_timeout", config.DefaultConnectTimeoutSecs*time.Second)
-	v.SetDefault("query_timeout", config.DefaultQueryTimeoutSecs*time.Second)
-
-	// Unmarshal to config
-	result := &config.Config{}
-	if err := v.Unmarshal(result); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to unmarshal config: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Set durations from duration flags
-	result.ConnectTimeout = v.GetDuration("connect_timeout")
-	result.QueryTimeout = v.GetDuration("query_timeout")
-
-	return result
-}
-
 func main() {
 	rootCmd.AddCommand(exportCmd)
 	rootCmd.AddCommand(validateCmd)
@@ -139,21 +75,93 @@ func main() {
 	}
 }
 
-func runExport(cmd *cobra.Command, args []string) error {
-	// Load configuration from flags and environment
-	cfg := loadConfig(cmd)
-
-	// Create context for this run
+// setupContext creates a context with cancellation and signal handling
+func setupContext() context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
-	// Set up signal handling for this command
+	// Set up signal handling
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sigCh
 		fmt.Println("\nReceived interrupt signal, shutting down...")
 		cancel()
+	}()
+
+	return ctx
+}
+
+// connectDatabase establishes a connection to the Oracle database
+func connectDatabase(ctx context.Context, cfg *config.Config) (*db.OracleDB, error) {
+	connCtx, connCancel := context.WithTimeout(ctx, cfg.ConnectTimeout)
+	defer connCancel()
+
+	database, err := db.ConnectString(
+		connCtx,
+		cfg.ConnectionString(),
+		"", // user and password are already in connection string
+		"",
+		cfg.ConnectTimeout,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	return database, nil
+}
+
+// executeExport runs the export process
+func executeExport(ctx context.Context, cfg *config.Config, database *db.OracleDB, st *state.File, logger *logging.Logger) (*types.ExportResult, error) {
+	// Create query timeout context
+	queryCtx, queryCancel := context.WithTimeout(ctx, cfg.QueryTimeout)
+	defer queryCancel()
+
+	// Create and run exporter
+	exp := exporter.New(cfg, database, st, logger)
+	return exp.Run(queryCtx)
+}
+
+// printSummary prints the export result summary
+func printSummary(result *types.ExportResult, cfg *config.Config, logger *logging.Logger) {
+	duration := result.Duration
+	minutes := int(duration.Minutes())
+	seconds := int(duration.Seconds()) % 60
+
+	logger.Info("==================================================")
+	logger.Info("Export completed successfully")
+	logger.Info("Total duration: %dm %ds", minutes, seconds)
+	logger.Info("Total entities: %d", result.TotalEntities)
+	logger.Info("Successfully processed: %d", result.SuccessCount)
+	if result.FailedCount > 0 {
+		logger.Error("Failed entities: %d", result.FailedCount)
+	}
+	logger.Info("Skipped (inactive): %d", result.TotalEntities-result.ProcessedCount)
+	logger.Info("==================================================")
+
+	// Print per-entity results if verbose
+	if cfg.Verbose {
+		for _, r := range result.Results {
+			if r.Success {
+				logger.Info("  ✓ %s: %d rows (%v)", r.Entity, r.RowCount, r.Duration)
+			} else {
+				logger.Error("  ✗ %s: %v", r.Entity, r.Error)
+			}
+		}
+	}
+}
+
+func runExport(cmd *cobra.Command, args []string) error {
+	// Load configuration
+	cfg := config.FromCommand(cmd)
+
+	// Setup context with signal handling
+	ctx := setupContext()
+	defer func() {
+		// Cancel context to ensure goroutines exit
+		select {
+		case <-ctx.Done():
+		default:
+		}
 	}()
 
 	// Create logger
@@ -199,32 +207,17 @@ func runExport(cmd *cobra.Command, args []string) error {
 	logger.Info("Connecting to database: %s@%s:%d/%s",
 		cfg.DBUser, cfg.DBHost, cfg.DBPort, cfg.DBService)
 
-	connCtx, connCancel := context.WithTimeout(ctx, cfg.ConnectTimeout)
-	defer connCancel()
-
-	database, err := db.ConnectString(
-		connCtx,
-		cfg.ConnectionString(),
-		"", // user and password are already in connection string
-		"",
-		cfg.ConnectTimeout,
-	)
+	database, err := connectDatabase(ctx, cfg)
 	if err != nil {
 		logger.Error("Failed to connect to database: %v", err)
-		return fmt.Errorf("failed to connect to database: %w", err)
+		return err
 	}
 	defer database.Close()
 
 	logger.Info("Database connection established")
 
-	// Create exporter with query timeout
-	queryCtx, queryCancel := context.WithTimeout(ctx, cfg.QueryTimeout)
-	defer queryCancel()
-
-	exp := exporter.New(cfg, database, st, logger)
-
-	// Run export
-	result, err := exp.Run(queryCtx)
+	// Execute export
+	result, err := executeExport(ctx, cfg, database, st, logger)
 	if err != nil {
 		logger.Error("Export failed: %v", err)
 		return err
@@ -243,7 +236,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 }
 
 func runValidate(cmd *cobra.Command, args []string) error {
-	cfg := loadConfig(cmd)
+	cfg := config.FromCommand(cmd)
 
 	logger := logging.New(cfg.Verbose)
 	defer logger.Close()
@@ -275,32 +268,4 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
-}
-
-func printSummary(result *types.ExportResult, cfg *config.Config, logger *logging.Logger) {
-	duration := result.Duration
-	minutes := int(duration.Minutes())
-	seconds := int(duration.Seconds()) % 60
-
-	logger.Info("==================================================")
-	logger.Info("Export completed successfully")
-	logger.Info("Total duration: %dm %ds", minutes, seconds)
-	logger.Info("Total entities: %d", result.TotalEntities)
-	logger.Info("Successfully processed: %d", result.SuccessCount)
-	if result.FailedCount > 0 {
-		logger.Error("Failed entities: %d", result.FailedCount)
-	}
-	logger.Info("Skipped (inactive): %d", result.TotalEntities-result.ProcessedCount)
-	logger.Info("==================================================")
-
-	// Print per-entity results if verbose
-	if cfg.Verbose {
-		for _, r := range result.Results {
-			if r.Success {
-				logger.Info("  ✓ %s: %d rows (%v)", r.Entity, r.RowCount, r.Duration)
-			} else {
-				logger.Error("  ✗ %s: %v", r.Entity, r.Error)
-			}
-		}
-	}
 }

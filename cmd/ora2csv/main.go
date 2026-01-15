@@ -35,19 +35,19 @@ It streams data directly from Oracle to CSV without storing entire exports in me
 }
 
 var exportCmd = &cobra.Command{
-	Use:   "export",
-	Short: "Export data from Oracle to CSV",
-	Long:  "Export data from Oracle database to CSV files based on state.json configuration",
-	RunE:  runExport,
-	SilenceUsage:  true, // Don't print usage on error
+	Use:           "export",
+	Short:         "Export data from Oracle to CSV",
+	Long:          "Export data from Oracle database to CSV files based on state.json configuration",
+	RunE:          runExport,
+	SilenceUsage:  true,  // Don't print usage on error
 	SilenceErrors: false, // Still print errors
 }
 
 var validateCmd = &cobra.Command{
-	Use:   "validate",
-	Short: "Validate configuration and SQL files",
-	Long:  "Validate configuration, check SQL files exist, and optionally test database connection",
-	RunE:  runValidate,
+	Use:          "validate",
+	Short:        "Validate configuration and SQL files",
+	Long:         "Validate configuration, check SQL files exist, and optionally test database connection",
+	RunE:         runValidate,
 	SilenceUsage: true, // Don't print usage on error
 }
 

@@ -24,9 +24,9 @@ export ORA2CSV_DB_HOST="localhost"
 export ORA2CSV_DB_PORT="1521"
 export ORA2CSV_DB_SERVICE="ORCL"
 export ORA2CSV_DB_USER="ora2csv"
-export ORA2CSV_STATE_FILE="$SCRIPT_DIR/state.json"
-export ORA2CSV_SQL_DIR="$SCRIPT_DIR/sql"
-export ORA2CSV_EXPORT_DIR="$SCRIPT_DIR/export"
+export ORA2CSV_STATE_FILE="./state.json"
+export ORA2CSV_SQL_DIR="./sql"
+export ORA2CSV_EXPORT_DIR="./export"
 
 echo "================================================"
 echo "ora2csv E2E Test Run"
@@ -41,7 +41,12 @@ echo "================================================"
 echo ""
 
 # Run ora2csv with provided arguments
-"$BINARY" "$@"
+# Default to 'export' command if no args provided
+if [[ $# -eq 0 ]]; then
+    "$BINARY" export
+else
+    "$BINARY" "$@"
+fi
 
 echo ""
 echo "================================================"

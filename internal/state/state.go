@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,7 +9,9 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/koltyakov/ora2csv/internal/storage"
 	"github.com/koltyakov/ora2csv/pkg/types"
 )
 
@@ -17,15 +20,55 @@ type File struct {
 	mu       sync.RWMutex
 	path     string
 	entities []types.EntityState
+	s3       *storage.S3Client
+	s3Key    string // S3 key for state file
 }
 
 // Load reads and parses the state file
-func Load(path string) (*File, error) {
-	data, err := os.ReadFile(path)
+// If s3 is provided, it will try to load from S3 first, falling back to local file
+func Load(path string, s3 *storage.S3Client, s3Key string) (*File, error) {
+	var data []byte
+	var err error
+
+	// Try S3 first if available
+	if s3 != nil && s3Key != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		// Check if state exists in S3
+		exists, err := s3.Exists(ctx, s3Key)
+		if err == nil && exists {
+			// Download from S3
+			data, err = s3.DownloadBytes(ctx, s3Key)
+			if err == nil {
+				// Successfully downloaded from S3, save local copy
+				_ = os.WriteFile(path, data, 0644)
+				return parseState(data, path, s3, s3Key)
+			}
+			// On error, fall through to local file
+		}
+	}
+
+	// Fall back to local file
+	data, err = os.ReadFile(path)
 	if err != nil {
+		// If local doesn't exist and S3 is enabled, return empty state
+		if s3 != nil && os.IsNotExist(err) {
+			return &File{
+				path:     path,
+				entities: []types.EntityState{},
+				s3:       s3,
+				s3Key:    s3Key,
+			}, nil
+		}
 		return nil, fmt.Errorf("failed to read state file: %w", err)
 	}
 
+	return parseState(data, path, s3, s3Key)
+}
+
+// parseState parses state data and returns a File
+func parseState(data []byte, path string, s3 *storage.S3Client, s3Key string) (*File, error) {
 	var entities []types.EntityState
 	if err := json.Unmarshal(data, &entities); err != nil {
 		return nil, fmt.Errorf("failed to parse state file: %w", err)
@@ -34,6 +77,8 @@ func Load(path string) (*File, error) {
 	return &File{
 		path:     path,
 		entities: entities,
+		s3:       s3,
+		s3Key:    s3Key,
 	}, nil
 }
 
@@ -95,7 +140,7 @@ func (f *File) UpdateEntityTimestamp(entityName string, timestamp string) error 
 	return f.save()
 }
 
-// save writes the state to disk atomically
+// save writes the state to disk atomically and uploads to S3 if configured
 func (f *File) save() error {
 	// Sort entities by name for consistent output
 	sorted := make([]types.EntityState, len(f.entities))
@@ -119,6 +164,18 @@ func (f *File) save() error {
 	if err := os.Rename(tmpPath, f.path); err != nil {
 		os.Remove(tmpPath) // Clean up temp file
 		return fmt.Errorf("failed to rename temp file: %w", err)
+	}
+
+	// Upload to S3 if configured
+	if f.s3 != nil && f.s3Key != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		if err := f.s3.UploadBytes(ctx, f.s3Key, data); err != nil {
+			// Log error but don't fail - local save succeeded
+			// This allows the export to continue even if S3 upload fails
+			fmt.Fprintf(os.Stderr, "Warning: failed to upload state to S3: %v\n", err)
+		}
 	}
 
 	return nil

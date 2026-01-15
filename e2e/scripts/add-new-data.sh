@@ -37,6 +37,9 @@ if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
 fi
 
 echo "Adding new data using bulk inserts..."
+# Small delay to ensure new timestamps are after any recent export runs
+sleep 2
+
 docker exec -i "$CONTAINER_NAME" sqlplus -s "$ORACLE_USER/ora2csv_pass@//localhost:1521/ORCL" << EOF
 SET SERVEROUTPUT ON
 SET FEEDBACK OFF

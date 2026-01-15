@@ -12,6 +12,7 @@ import (
 	"github.com/koltyakov/ora2csv/internal/db"
 	"github.com/koltyakov/ora2csv/internal/logging"
 	"github.com/koltyakov/ora2csv/internal/state"
+	"github.com/koltyakov/ora2csv/internal/storage"
 	"github.com/koltyakov/ora2csv/pkg/types"
 )
 
@@ -21,15 +22,17 @@ type Exporter struct {
 	db     *db.OracleDB
 	st     *state.File
 	logger *logging.Logger
+	s3     *storage.S3Client
 }
 
 // New creates a new Exporter
-func New(cfg *config.Config, database *db.OracleDB, st *state.File, logger *logging.Logger) *Exporter {
+func New(cfg *config.Config, database *db.OracleDB, st *state.File, logger *logging.Logger, s3 *storage.S3Client) *Exporter {
 	return &Exporter{
 		cfg:    cfg,
 		db:     database,
 		st:     st,
 		logger: logger,
+		s3:     s3,
 	}
 }
 
@@ -43,8 +46,8 @@ func (e *Exporter) Run(ctx context.Context) (*types.ExportResult, error) {
 	e.logger.Info("Starting data export process")
 	e.logger.Info("Total entities: %d, Active: %d", e.st.TotalCount(), e.st.ActiveCount())
 
-	// Capture till date once for all entities
-	tillDate := time.Now()
+	// Capture till date once for all entities (use UTC to avoid timezone issues)
+	tillDate := time.Now().UTC()
 	tillDateStr := tillDate.Format("2006-01-02T15:04:05")
 	e.logger.Info("Using till date for all entities: %s", tillDateStr)
 
@@ -161,9 +164,9 @@ func (e *Exporter) getStartDate(entity types.EntityState) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("failed to parse lastRunTime: %w", err)
 	}
 
-	// If no last run time, use default days back
+	// If no last run time, use default days back (UTC to avoid timezone issues)
 	if lastRunTime.IsZero() {
-		return time.Now().AddDate(0, 0, -e.cfg.DefaultDaysBack), nil
+		return time.Now().UTC().AddDate(0, 0, -e.cfg.DefaultDaysBack), nil
 	}
 
 	return lastRunTime, nil
@@ -210,13 +213,36 @@ func (e *Exporter) executeQueryToCSV(ctx context.Context, sqlContent, startDate,
 		return 0, fmt.Errorf("failed to get columns: %w", err)
 	}
 
-	// Create streaming CSV writer
-	writer, err := NewStreamingCSVWriter(outputPath, len(columns))
-	if err != nil {
-		rows.Close()
-		return 0, fmt.Errorf("failed to create CSV writer: %w", err)
+	// Create the appropriate CSV writer based on S3 configuration
+	var writer csvWriter
+	if e.s3 != nil && e.cfg.S3.Bucket != "" {
+		// Generate S3 key from output path
+		safeDate := strings.ReplaceAll(startDate, ":", "-")
+		entityName := filepath.Base(outputPath)
+		entityName = strings.TrimSuffix(entityName, filepath.Ext(entityName))
+		entityName = strings.Split(entityName, "__")[0]
+		s3Key := e.cfg.S3.Key(fmt.Sprintf("%s/%s__%s.csv", entityName, entityName, safeDate))
+
+		log.Info("Streaming to S3: %s", s3Key)
+
+		// Create S3 streaming writer
+		w, err := NewS3StreamingCSVWriter(e.s3, s3Key, outputPath, len(columns))
+		if err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("failed to create S3 CSV writer: %w", err)
+		}
+		defer w.Close()
+		writer = w
+	} else {
+		// Create local file writer
+		w, err := NewStreamingCSVWriter(outputPath, len(columns))
+		if err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("failed to create CSV writer: %w", err)
+		}
+		defer w.Close()
+		writer = w
 	}
-	defer writer.Close()
 
 	// Write headers
 	if err := writer.WriteHeaders(columns); err != nil {
@@ -257,6 +283,16 @@ func (e *Exporter) executeQueryToCSV(ctx context.Context, sqlContent, startDate,
 	}
 
 	return rowCount, nil
+}
+
+// csvWriter is the interface for both StreamingCSVWriter and S3StreamingCSVWriter
+type csvWriter interface {
+	WriteHeaders(columns []string) error
+	GetScanTargets() []interface{}
+	WriteScannedRow() error
+	Flush() error
+	Remove() error
+	Close() error
 }
 
 // Validate validates configuration and SQL files

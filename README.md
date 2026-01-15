@@ -6,6 +6,7 @@ Oracle to CSV exporter with state management and incremental sync support. A lig
 
 - **Streaming Export**: Direct Oracle-to-CSV streaming - no full dataset in memory
 - **Incremental Sync**: State management tracks last run time per entity
+- **S3 Storage Support**: Stream directly to Amazon S3 or S3-compatible services
 - **Pure Go Oracle Driver**: No Oracle client installation required (uses `go-ora/v2`)
 - **Single Binary**: Cloud-friendly deployment with no external dependencies
 - **RFC 4180 CSV**: Proper CSV escaping and formatting
@@ -78,16 +79,24 @@ Download the latest release from [Releases](https://github.com/koltyakov/ora2csv
 
 ### Environment Variables
 
-| Variable              | Description           | Default        |
-| --------------------- | --------------------- | -------------- |
-| `ORA2CSV_DB_PASSWORD` | Database password     | _required_     |
-| `ORA2CSV_DB_HOST`     | Database host         | `dbserver`     |
-| `ORA2CSV_DB_PORT`     | Database port         | `1521`         |
-| `ORA2CSV_DB_SERVICE`  | Database service name | `ORCL`         |
-| `ORA2CSV_DB_USER`     | Database user         | `system`       |
-| `ORA2CSV_STATE_FILE`  | Path to state.json    | `./state.json` |
-| `ORA2CSV_SQL_DIR`     | Path to SQL files     | `./sql`        |
-| `ORA2CSV_EXPORT_DIR`  | Path for output CSVs  | `./export`     |
+| Variable                | Description           | Default        |
+| ----------------------- | --------------------- | -------------- |
+| `ORA2CSV_DB_PASSWORD`   | Database password     | _required_     |
+| `ORA2CSV_DB_HOST`       | Database host         | `dbserver`     |
+| `ORA2CSV_DB_PORT`       | Database port         | `1521`         |
+| `ORA2CSV_DB_SERVICE`    | Database service name | `ORCL`         |
+| `ORA2CSV_DB_USER`       | Database user         | `system`       |
+| `ORA2CSV_STATE_FILE`    | Path to state.json    | `./state.json` |
+| `ORA2CSV_SQL_DIR`       | Path to SQL files     | `./sql`        |
+| `ORA2CSV_EXPORT_DIR`    | Path for output CSVs  | `./export`     |
+| `ORA2CSV_S3_BUCKET`     | S3 bucket name        | empty          |
+| `ORA2CSV_S3_PREFIX`     | S3 key prefix         | empty          |
+| `ORA2CSV_S3_ENDPOINT`   | S3 endpoint URL       | empty          |
+| `AWS_ACCESS_KEY_ID`     | AWS access key        | (AWS SDK)      |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret key        | (AWS SDK)      |
+| `AWS_REGION`            | AWS region            | (AWS SDK)      |
+
+For detailed S3 configuration, see the [S3 Storage Guide](docs/s3-guide.md).
 
 ### Command Flags
 
@@ -105,9 +114,19 @@ Flags:
   --days-back int           Default days to look back for first run (default 30)
   --connect-timeout duration Connection timeout (default 30s)
   --query-timeout duration  Query timeout (default 5m)
+  --s3-bucket string        S3 bucket name (enables S3 storage)
+  --s3-prefix string        S3 key prefix
+  --s3-endpoint string      S3 endpoint URL for S3-compatible services
+  --s3-access-key string    S3 access key (for S3-compatible services)
+  --s3-secret-key string    S3 secret key (for S3-compatible services)
+  --s3-session-token string S3 session token (for S3-compatible services)
   --dry-run                Validate without executing
   --verbose                Enable verbose logging
 ```
+
+### S3 Storage
+
+For S3 configuration, examples, and S3-compatible service setup, see the [S3 Storage Guide](docs/s3-guide.md).
 
 ### State File Format
 
@@ -242,6 +261,7 @@ SQL files should:
 ### Data Warehouse Ingestion
 
 ora2csv is commonly used for periodic incremental data export to data warehouses. See [Data Warehouse Ingestion Guide](docs/datawarehouse-use-case.md) for:
+
 - Architecture patterns (Oracle → ora2csv → S3 → Snowflake/BigQuery)
 - Incremental sync setup
 - SQL file design for merge operations
@@ -268,21 +288,6 @@ make build        # Build for current platform
 make build-all    # Build for all platforms
 make test         # Run tests
 make lint         # Run linter
-```
-
-### Project Structure
-
-```
-ora2csv/
-├── cmd/ora2csv/          # CLI entry point
-├── internal/
-│   ├── config/           # Configuration management
-│   ├── db/               # Oracle database layer
-│   ├── state/            # State file management
-│   ├── exporter/         # Export orchestration
-│   └── logging/          # Structured logging
-├── pkg/types/            # Shared type definitions
-└── sql/                  # SQL query files
 ```
 
 ## License

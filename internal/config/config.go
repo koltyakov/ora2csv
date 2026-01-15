@@ -28,6 +28,9 @@ type Config struct {
 	// Timeouts
 	ConnectTimeout time.Duration `mapstructure:"-"`
 	QueryTimeout   time.Duration `mapstructure:"-"`
+
+	// S3 destination
+	S3 S3Config `mapstructure:",squash"`
 }
 
 // ConnectionString returns the Oracle connection string for go-ora v2

@@ -46,6 +46,11 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("days_back must be between 0 and 3650")
 	}
 
+	// Validate S3 configuration
+	if err := c.S3.Validate(); err != nil {
+		return err
+	}
+
 	return nil
 }
 

@@ -9,18 +9,18 @@ type EntityState struct {
 	Active      bool   `json:"active"`
 }
 
-// GetLastRunTime parses the LastRunTime string into a time.Time
+// GetLastRunTime parses the LastRunTime string into a time.Time (UTC)
 // Returns zero time if LastRunTime is empty or "null"
 func (e *EntityState) GetLastRunTime() (time.Time, error) {
 	if e.LastRunTime == "" || e.LastRunTime == "null" {
 		return time.Time{}, nil
 	}
-	return time.Parse("2006-01-02T15:04:05", e.LastRunTime)
+	return time.ParseInLocation("2006-01-02T15:04:05", e.LastRunTime, time.UTC)
 }
 
-// SetLastRunTime sets the LastRunTime from a time.Time
+// SetLastRunTime sets the LastRunTime from a time.Time (formats as UTC)
 func (e *EntityState) SetLastRunTime(t time.Time) {
-	e.LastRunTime = t.Format("2006-01-02T15:04:05")
+	e.LastRunTime = t.UTC().Format("2006-01-02T15:04:05")
 }
 
 // EntityResult represents the result of processing a single entity

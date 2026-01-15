@@ -1,10 +1,14 @@
 package exporter
 
 import (
+	"context"
 	"encoding/csv"
 	"fmt"
 	"os"
 	"strconv"
+	"time"
+
+	"github.com/koltyakov/ora2csv/internal/storage"
 )
 
 // CSVWriter handles streaming CSV writing with RFC 4180 compliance
@@ -282,4 +286,114 @@ func RemoveEmpty(path string) error {
 		return os.Remove(path)
 	}
 	return nil
+}
+
+// S3StreamingCSVWriter streams CSV data directly to S3 via multipart upload
+// Data is buffered to a temp file during writing, then uploaded to S3 on Close()
+type S3StreamingCSVWriter struct {
+	csv         *CSVWriter
+	s3          *storage.S3Client
+	s3Key       string
+	localPath   string // For temp file during writing
+	dest        []interface{}
+	rowValues   []string
+	columnCount int
+}
+
+// NewS3StreamingCSVWriter creates a writer that streams to S3
+// The data is written to a temp file first, then uploaded to S3 on Close()
+func NewS3StreamingCSVWriter(s3 *storage.S3Client, s3Key, localPath string, columnCount int) (*S3StreamingCSVWriter, error) {
+	csvWriter, err := NewCSVWriter(localPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return &S3StreamingCSVWriter{
+		csv:         csvWriter,
+		s3:          s3,
+		s3Key:       s3Key,
+		localPath:   localPath,
+		dest:        make([]interface{}, columnCount),
+		rowValues:   make([]string, columnCount),
+		columnCount: columnCount,
+	}, nil
+}
+
+// GetScanTargets returns a slice of interface{} pointers for sql.Rows.Scan
+func (w *S3StreamingCSVWriter) GetScanTargets() []interface{} {
+	for i := range w.dest {
+		w.rowValues[i] = ""
+		w.dest[i] = &w.rowValues[i]
+	}
+	return w.dest
+}
+
+// WriteScannedRow writes the most recently scanned row
+func (w *S3StreamingCSVWriter) WriteScannedRow() error {
+	values := make([]interface{}, len(w.rowValues))
+	for i, v := range w.rowValues {
+		if v == "" {
+			values[i] = nil
+		} else {
+			values[i] = v
+		}
+	}
+	return w.csv.WriteRow(values)
+}
+
+// WriteHeaders writes the header row
+func (w *S3StreamingCSVWriter) WriteHeaders(columns []string) error {
+	return w.csv.WriteHeaders(columns)
+}
+
+// Close flushes, uploads to S3, and removes the local temp file
+func (w *S3StreamingCSVWriter) Close() error {
+	// Flush and close the local file
+	if err := w.csv.Close(); err != nil {
+		return err
+	}
+
+	// Upload to S3
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	// Open the file for upload
+	file, err := os.Open(w.localPath)
+	if err != nil {
+		return fmt.Errorf("failed to open file for S3 upload: %w", err)
+	}
+	defer file.Close()
+
+	// Upload to S3 via multipart upload
+	if err := w.s3.UploadStream(ctx, w.s3Key, file); err != nil {
+		// S3 upload failed - keep the local file as fallback
+		return fmt.Errorf("S3 upload failed: %w (local file kept at %s)", err, w.localPath)
+	}
+
+	// S3 upload succeeded - remove local temp file
+	if err := os.Remove(w.localPath); err != nil && !os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "Warning: failed to remove local file %s: %v\n", w.localPath, err)
+	}
+
+	return nil
+}
+
+// Flush flushes buffered data
+func (w *S3StreamingCSVWriter) Flush() error {
+	return w.csv.Flush()
+}
+
+// RowCount returns the number of rows written
+func (w *S3StreamingCSVWriter) RowCount() int {
+	return w.csv.RowCount()
+}
+
+// Remove removes the temp file
+func (w *S3StreamingCSVWriter) Remove() error {
+	return w.csv.Remove()
+}
+
+// GetLocalPath returns the local temp file path
+func (w *S3StreamingCSVWriter) GetLocalPath() string {
+	return w.localPath
 }

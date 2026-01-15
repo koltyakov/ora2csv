@@ -15,6 +15,7 @@ import (
 	"github.com/koltyakov/ora2csv/internal/exporter"
 	"github.com/koltyakov/ora2csv/internal/logging"
 	"github.com/koltyakov/ora2csv/internal/state"
+	"github.com/koltyakov/ora2csv/internal/storage"
 	"github.com/koltyakov/ora2csv/pkg/types"
 )
 
@@ -61,6 +62,14 @@ func init() {
 	rootCmd.PersistentFlags().Bool("verbose", false, "Enable verbose logging")
 	rootCmd.PersistentFlags().Duration("connect-timeout", config.DefaultConnectTimeoutSecs*time.Second, "Connection timeout")
 	rootCmd.PersistentFlags().Duration("query-timeout", config.DefaultQueryTimeoutSecs*time.Second, "Query timeout")
+
+	// S3 flags
+	rootCmd.PersistentFlags().String("s3-bucket", "", "S3 bucket name")
+	rootCmd.PersistentFlags().String("s3-prefix", "", "S3 key prefix")
+	rootCmd.PersistentFlags().String("s3-access-key", "", "S3 access key (for S3-compatible services)")
+	rootCmd.PersistentFlags().String("s3-secret-key", "", "S3 secret key (for S3-compatible services)")
+	rootCmd.PersistentFlags().String("s3-session-token", "", "S3 session token (for S3-compatible services)")
+	rootCmd.PersistentFlags().String("s3-endpoint", "", "S3 endpoint URL (for S3-compatible services like MinIO)")
 
 	// Validate-specific flags
 	validateCmd.Flags().Bool("test-connection", false, "Test database connection")
@@ -116,8 +125,20 @@ func executeExport(ctx context.Context, cfg *config.Config, database *db.OracleD
 	queryCtx, queryCancel := context.WithTimeout(ctx, cfg.QueryTimeout)
 	defer queryCancel()
 
+	// Initialize S3 client if enabled
+	var s3Client *storage.S3Client
+	if cfg.S3.Bucket != "" {
+		logger.Info("Initializing S3 client (bucket: %s)", cfg.S3.Bucket)
+		client, err := storage.NewS3Client(&cfg.S3)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize S3 client: %w", err)
+		}
+		s3Client = client
+		logger.Info("S3 client initialized")
+	}
+
 	// Create and run exporter
-	exp := exporter.New(cfg, database, st, logger)
+	exp := exporter.New(cfg, database, st, logger, s3Client)
 	return exp.Run(queryCtx)
 }
 
@@ -170,8 +191,29 @@ func runExport(cmd *cobra.Command, args []string) error {
 
 	logger.Info("Starting ora2csv v%s (built: %s)", version, buildTime)
 
-	// Load state file
-	st, err := state.Load(cfg.StateFile)
+	// Validate configuration (including S3)
+	if err := cfg.Validate(); err != nil {
+		logger.Error("Configuration validation failed: %v", err)
+		return err
+	}
+
+	// Initialize S3 client if enabled
+	var s3Client *storage.S3Client
+	var s3StateKey string
+	if cfg.S3.Bucket != "" {
+		logger.Info("S3 destination enabled (bucket: %s)", cfg.S3.Bucket)
+		client, err := storage.NewS3Client(&cfg.S3)
+		if err != nil {
+			logger.Error("Failed to initialize S3 client: %v", err)
+			return fmt.Errorf("failed to initialize S3 client: %w", err)
+		}
+		s3Client = client
+		s3StateKey = cfg.S3.StateKey()
+		logger.Info("S3 client initialized")
+	}
+
+	// Load state file (with S3 sync if enabled)
+	st, err := state.Load(cfg.StateFile, s3Client, s3StateKey)
 	if err != nil {
 		logger.Error("Failed to load state file: %v", err)
 		return fmt.Errorf("failed to load state file: %w", err)
@@ -189,12 +231,6 @@ func runExport(cmd *cobra.Command, args []string) error {
 		}
 		logger.Info("Validation successful")
 		return nil
-	}
-
-	// Validate configuration
-	if err := cfg.Validate(); err != nil {
-		logger.Error("Configuration validation failed: %v", err)
-		return err
 	}
 
 	// Ensure export directory exists
@@ -243,8 +279,14 @@ func runValidate(cmd *cobra.Command, args []string) error {
 
 	logger.Info("Validating ora2csv configuration")
 
-	// Load state file
-	st, err := state.Load(cfg.StateFile)
+	// Validate configuration
+	if err := cfg.Validate(); err != nil {
+		logger.Error("Configuration validation failed: %v", err)
+		return err
+	}
+
+	// Load state file (no S3 for validation)
+	st, err := state.Load(cfg.StateFile, nil, "")
 	if err != nil {
 		logger.Error("Failed to load state file: %v", err)
 		return fmt.Errorf("failed to load state file: %w", err)

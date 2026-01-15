@@ -30,6 +30,13 @@ func FromCommand(cmd *cobra.Command) *Config {
 		{"verbose", "verbose"},
 		{"connect-timeout", "connect_timeout"},
 		{"query-timeout", "query_timeout"},
+		// S3 flags (note: auth flags kept for non-AWS S3-compatible services)
+		{"s3-bucket", "s3_bucket"},
+		{"s3-prefix", "s3_prefix"},
+		{"s3-access-key", "s3_access_key"},
+		{"s3-secret-key", "s3_secret_key"},
+		{"s3-session-token", "s3_session_token"},
+		{"s3-endpoint", "s3_endpoint"},
 	}
 
 	for _, f := range flags {
@@ -44,6 +51,11 @@ func FromCommand(cmd *cobra.Command) *Config {
 	v.AutomaticEnv()
 	v.BindEnv("db_password", EnvDBPassword)
 
+	// S3 environment variable bindings
+	v.BindEnv("s3_bucket", EnvS3Bucket)
+	v.BindEnv("s3_prefix", EnvS3Prefix)
+	v.BindEnv("s3_endpoint", EnvS3Endpoint)
+
 	// Set defaults from config package
 	v.SetDefault("db_host", DefaultDBHost)
 	v.SetDefault("db_port", DefaultDBPort)
@@ -57,6 +69,9 @@ func FromCommand(cmd *cobra.Command) *Config {
 	v.SetDefault("verbose", false)
 	v.SetDefault("connect_timeout", DefaultConnectTimeoutSecs*time.Second)
 	v.SetDefault("query_timeout", DefaultQueryTimeoutSecs*time.Second)
+
+	// S3 defaults
+	// No defaults - using AWS SDK default region and credential chain
 
 	// Unmarshal to config
 	result := &Config{}

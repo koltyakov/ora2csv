@@ -17,7 +17,7 @@ func TestLoad(t *testing.T) {
 ]`
 		os.WriteFile(statePath, []byte(testState), 0644)
 
-		st, err := Load(statePath)
+		st, err := Load(statePath, nil, "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -31,7 +31,7 @@ func TestLoad(t *testing.T) {
 	})
 
 	t.Run("missing file", func(t *testing.T) {
-		_, err := Load("/nonexistent/state.json")
+		_, err := Load("/nonexistent/state.json", nil, "")
 		if err == nil {
 			t.Error("expected error for missing file, got nil")
 		}
@@ -42,7 +42,7 @@ func TestLoad(t *testing.T) {
 		statePath := filepath.Join(tmpDir, "state.json")
 		os.WriteFile(statePath, []byte("invalid json"), 0644)
 
-		_, err := Load(statePath)
+		_, err := Load(statePath, nil, "")
 		if err == nil {
 			t.Error("expected error for invalid JSON, got nil")
 		}
@@ -60,7 +60,7 @@ func TestGetEntities(t *testing.T) {
 ]`
 	os.WriteFile(statePath, []byte(testState), 0644)
 
-	st, err := Load(statePath)
+	st, err := Load(statePath, nil, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestGetActiveEntities(t *testing.T) {
 ]`
 	os.WriteFile(statePath, []byte(testState), 0644)
 
-	st, err := Load(statePath)
+	st, err := Load(statePath, nil, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestFindEntity(t *testing.T) {
 ]`
 	os.WriteFile(statePath, []byte(testState), 0644)
 
-	st, err := Load(statePath)
+	st, err := Load(statePath, nil, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestUpdateEntityTimestamp(t *testing.T) {
 ]`
 	os.WriteFile(statePath, []byte(testState), 0644)
 
-	st, err := Load(statePath)
+	st, err := Load(statePath, nil, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestUpdateEntityTimestamp(t *testing.T) {
 	}
 
 	// Verify state was persisted
-	st2, err := Load(statePath)
+	st2, err := Load(statePath, nil, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestUpdateEntityTimestamp_NotFound(t *testing.T) {
 	testState := `[{"entity":"test.entity1","lastRunTime":"2025-01-01T00:00:00","active":true}]`
 	os.WriteFile(statePath, []byte(testState), 0644)
 
-	st, err := Load(statePath)
+	st, err := Load(statePath, nil, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestValidateSQLFiles(t *testing.T) {
 		os.WriteFile(filepath.Join(sqlDir, "test.entity1.sql"), []byte("SELECT 1"), 0644)
 		os.WriteFile(filepath.Join(sqlDir, "test.entity2.sql"), []byte("SELECT 2"), 0644)
 
-		st, err := Load(statePath)
+		st, err := Load(statePath, nil, "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -232,7 +232,7 @@ func TestValidateSQLFiles(t *testing.T) {
 		os.MkdirAll(sqlDir, 0755)
 		// Don't create SQL files
 
-		st, err := Load(statePath)
+		st, err := Load(statePath, nil, "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -257,7 +257,7 @@ func TestValidateSQLFiles(t *testing.T) {
 		os.MkdirAll(sqlDir, 0755)
 		os.WriteFile(filepath.Join(sqlDir, "test.active1.sql"), []byte("SELECT 1"), 0644)
 
-		st, err := Load(statePath)
+		st, err := Load(statePath, nil, "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -289,7 +289,7 @@ func TestTotalCount(t *testing.T) {
 ]`
 	os.WriteFile(statePath, []byte(testState), 0644)
 
-	st, err := Load(statePath)
+	st, err := Load(statePath, nil, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestActiveCount(t *testing.T) {
 ]`
 	os.WriteFile(statePath, []byte(testState), 0644)
 
-	st, err := Load(statePath)
+	st, err := Load(statePath, nil, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestSave_SortsEntities(t *testing.T) {
 ]`
 	os.WriteFile(statePath, []byte(unsortedState), 0644)
 
-	st, err := Load(statePath)
+	st, err := Load(statePath, nil, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -344,7 +344,7 @@ func TestSave_SortsEntities(t *testing.T) {
 	}
 
 	// Reload and verify entities are still there and sorted
-	st2, err := Load(statePath)
+	st2, err := Load(statePath, nil, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -373,7 +373,7 @@ func TestSave_Atomic(t *testing.T) {
 	testState := `[{"entity":"test.entity1","lastRunTime":"","active":true}]`
 	os.WriteFile(statePath, []byte(testState), 0644)
 
-	st, err := Load(statePath)
+	st, err := Load(statePath, nil, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -387,7 +387,7 @@ func TestSave_Atomic(t *testing.T) {
 	}
 
 	// Final state should be valid
-	st2, err := Load(statePath)
+	st2, err := Load(statePath, nil, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -62,9 +62,15 @@ func (e *Exporter) Run(ctx context.Context) (*types.ExportResult, error) {
 			// Update state only on success
 			if err := e.st.UpdateEntityTimestamp(entity.Entity, tillDateStr); err != nil {
 				e.logger.Error("Failed to update state for %s: %v", entity.Entity, err)
+				result.TotalEntities = e.st.TotalCount()
+				result.Duration = time.Since(startTime)
+				return result, fmt.Errorf("failed to update state for %s: %w", entity.Entity, err)
 			}
 		} else {
 			result.FailedCount++
+			result.TotalEntities = e.st.TotalCount()
+			result.Duration = time.Since(startTime)
+			return result, fmt.Errorf("entity %s failed: %w", entity.Entity, entityResult.Error)
 		}
 	}
 

@@ -172,9 +172,7 @@ func (f *File) save() error {
 		defer cancel()
 
 		if err := f.s3.UploadBytes(ctx, f.s3Key, data); err != nil {
-			// Log error but don't fail - local save succeeded
-			// This allows the export to continue even if S3 upload fails
-			fmt.Fprintf(os.Stderr, "Warning: failed to upload state to S3: %v\n", err)
+			return fmt.Errorf("failed to upload state to S3 (key=%s): %w", f.s3Key, err)
 		}
 	}
 

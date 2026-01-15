@@ -39,6 +39,8 @@ var exportCmd = &cobra.Command{
 	Short: "Export data from Oracle to CSV",
 	Long:  "Export data from Oracle database to CSV files based on state.json configuration",
 	RunE:  runExport,
+	SilenceUsage:  true, // Don't print usage on error
+	SilenceErrors: false, // Still print errors
 }
 
 var validateCmd = &cobra.Command{
@@ -46,6 +48,7 @@ var validateCmd = &cobra.Command{
 	Short: "Validate configuration and SQL files",
 	Long:  "Validate configuration, check SQL files exist, and optionally test database connection",
 	RunE:  runValidate,
+	SilenceUsage: true, // Don't print usage on error
 }
 
 func init() {
@@ -210,6 +213,16 @@ func runExport(cmd *cobra.Command, args []string) error {
 		s3Client = client
 		s3StateKey = cfg.S3.StateKey()
 		logger.Info("S3 client initialized")
+
+		// Check S3 connectivity before starting export
+		logger.Info("Checking S3 connectivity...")
+		checkCtx, checkCancel := context.WithTimeout(ctx, 10*time.Second)
+		if err := s3Client.CheckConnection(checkCtx); err != nil {
+			logger.Error("S3 connectivity check failed: %v", err)
+			return fmt.Errorf("S3 connectivity check failed: %w", err)
+		}
+		checkCancel()
+		logger.Info("S3 connectivity verified")
 	}
 
 	// Load state file (with S3 sync if enabled)

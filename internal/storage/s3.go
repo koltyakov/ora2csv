@@ -239,3 +239,35 @@ func (s *S3Client) DownloadBytes(ctx context.Context, key string) ([]byte, error
 
 	return io.ReadAll(reader)
 }
+
+// CheckConnection verifies S3 connectivity and PutObject permissions
+// It uploads a small test object and then deletes it
+func (s *S3Client) CheckConnection(ctx context.Context) error {
+	testKey := ".ora2csv-connectivity-test"
+
+	// Try to upload a small object (tests PutObject permission)
+	putInput := &s3.PutObjectInput{
+		Bucket: aws.String(s.cfg.Bucket),
+		Key:    aws.String(testKey),
+		Body:   bytes.NewReader([]byte("connectivity check")),
+	}
+
+	_, err := s.client.PutObject(ctx, putInput)
+	if err != nil {
+		return fmt.Errorf("S3 connection check failed: %w", err)
+	}
+
+	// Clean up the test object
+	deleteInput := &s3.DeleteObjectInput{
+		Bucket: aws.String(s.cfg.Bucket),
+		Key:    aws.String(testKey),
+	}
+
+	_, err = s.client.DeleteObject(ctx, deleteInput)
+	if err != nil {
+		// Log warning but don't fail - the upload succeeded
+		return fmt.Errorf("S3 connection check succeeded but cleanup failed: %w", err)
+	}
+
+	return nil
+}

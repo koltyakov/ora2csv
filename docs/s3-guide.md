@@ -181,6 +181,16 @@ When running on AWS infrastructure with IAM role:
 ora2csv export --s3-bucket=my-export-bucket
 ```
 
+### Running on AWS Lambda
+
+For scheduled, serverless exports, ora2csv can be deployed to AWS Lambda. See the [Lambda Deployment Guide](lambda.md) for complete instructions on:
+
+- Building and packaging the Lambda binary
+- IAM role requirements and VPC configuration
+- Scheduling with EventBridge
+- Monitoring with CloudWatch
+- Terraform deployment examples
+
 ## S3-Compatible Services
 
 ### Wasabi
@@ -217,21 +227,21 @@ ora2csv export \
 
 ### S3 Upload Failure
 
-If S3 upload fails, the local CSV file is kept as a fallback:
+If S3 upload fails, the entire export stops and an error is returned:
 
 ```
-[2025-01-14 16:30:00] [entity] S3 upload failed: operation error S3: PutObject...
-(local file kept at /path/to/export/entity__2025-01-14T00-00-00.csv)
+[2026-01-14 16:30:00] [entity] S3 upload failed: operation error S3: PutObject...
+Error: entity entity1 failed: S3 upload failed: ... (local file kept at /path/to/export/entity__2025-01-14T00-00-00.csv)
 ```
 
-The export process continues with other entities.
+The local CSV file is preserved as a fallback. Fix the S3 credentials or connectivity issue, then retry.
 
 ### State Upload Failure
 
-If state upload to S3 fails, a warning is logged but the export continues:
+If state upload to S3 fails, the export stops and an error is returned:
 
 ```
-Warning: failed to upload state to S3: ...
+Error: failed to update state for entity1: failed to upload state to S3 (key=prefix/state.json): ...
 ```
 
 The local state file is preserved and will be used on the next run.

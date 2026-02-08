@@ -2,7 +2,9 @@ package exporter
 
 import (
 	"context"
+	"database/sql"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -111,9 +113,13 @@ func (w *CSVWriter) Close() error {
 		if err := w.writer.Error(); err != nil {
 			return err
 		}
+		w.writer = nil
 	}
 	if w.file != nil {
-		return w.file.Close()
+		if err := w.file.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+			return err
+		}
+		w.file = nil
 	}
 	return nil
 }
@@ -130,9 +136,13 @@ func (w *CSVWriter) HasData() bool {
 
 // Remove removes the file if no data was written
 func (w *CSVWriter) Remove() error {
+	w.writer = nil
 	if w.file != nil {
-		w.file.Close()
 		path := w.file.Name()
+		if err := w.file.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+			return err
+		}
+		w.file = nil
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
@@ -144,7 +154,7 @@ func (w *CSVWriter) Remove() error {
 type StreamingCSVWriter struct {
 	csv       *CSVWriter
 	dest      []interface{}
-	rowValues []string
+	rowValues []sql.NullString
 }
 
 // NewStreamingCSVWriter creates a writer optimized for streaming database rows
@@ -157,14 +167,14 @@ func NewStreamingCSVWriter(filePath string, columnCount int) (*StreamingCSVWrite
 	return &StreamingCSVWriter{
 		csv:       csvWriter,
 		dest:      make([]interface{}, columnCount),
-		rowValues: make([]string, columnCount),
+		rowValues: make([]sql.NullString, columnCount),
 	}, nil
 }
 
 // GetScanTargets returns a slice of interface{} pointers for sql.Rows.Scan
 func (w *StreamingCSVWriter) GetScanTargets() []interface{} {
 	for i := range w.dest {
-		w.rowValues[i] = ""
+		w.rowValues[i] = sql.NullString{}
 		w.dest[i] = &w.rowValues[i]
 	}
 	return w.dest
@@ -172,14 +182,13 @@ func (w *StreamingCSVWriter) GetScanTargets() []interface{} {
 
 // WriteScannedRow writes the most recently scanned row
 func (w *StreamingCSVWriter) WriteScannedRow() error {
-	// Convert string pointers to actual string values
+	// Convert scanned values preserving the NULL vs empty-string distinction.
 	values := make([]interface{}, len(w.rowValues))
 	for i, v := range w.rowValues {
-		// Check for NULL (represented by nil pointer or empty string from scan)
-		if v == "" {
+		if !v.Valid {
 			values[i] = nil
 		} else {
-			values[i] = v
+			values[i] = v.String
 		}
 	}
 	return w.csv.WriteRow(values)
@@ -220,8 +229,12 @@ type RowScanner interface {
 }
 
 // StreamFromRows streams data from database rows directly to CSV
-func StreamFromRows(writer *StreamingCSVWriter, rows RowScanner) error {
-	defer rows.Close()
+func StreamFromRows(writer *StreamingCSVWriter, rows RowScanner) (retErr error) {
+	defer func() {
+		if err := rows.Close(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("failed to close rows: %w", err))
+		}
+	}()
 
 	// Get column names for header
 	columns, err := rows.Columns()
@@ -269,7 +282,12 @@ func IsEmpty(path string) bool {
 	if err != nil {
 		return true
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			// Close errors do not affect emptiness check here.
+			_ = err
+		}
+	}()
 
 	stat, err := file.Stat()
 	if err != nil {
@@ -296,8 +314,9 @@ type S3StreamingCSVWriter struct {
 	s3Key       string
 	localPath   string // For temp file during writing
 	dest        []interface{}
-	rowValues   []string
+	rowValues   []sql.NullString
 	columnCount int
+	skipUpload  bool
 }
 
 // NewS3StreamingCSVWriter creates a writer that streams to S3
@@ -314,7 +333,7 @@ func NewS3StreamingCSVWriter(s3 *storage.S3Client, s3Key, localPath string, colu
 		s3Key:       s3Key,
 		localPath:   localPath,
 		dest:        make([]interface{}, columnCount),
-		rowValues:   make([]string, columnCount),
+		rowValues:   make([]sql.NullString, columnCount),
 		columnCount: columnCount,
 	}, nil
 }
@@ -322,7 +341,7 @@ func NewS3StreamingCSVWriter(s3 *storage.S3Client, s3Key, localPath string, colu
 // GetScanTargets returns a slice of interface{} pointers for sql.Rows.Scan
 func (w *S3StreamingCSVWriter) GetScanTargets() []interface{} {
 	for i := range w.dest {
-		w.rowValues[i] = ""
+		w.rowValues[i] = sql.NullString{}
 		w.dest[i] = &w.rowValues[i]
 	}
 	return w.dest
@@ -332,10 +351,10 @@ func (w *S3StreamingCSVWriter) GetScanTargets() []interface{} {
 func (w *S3StreamingCSVWriter) WriteScannedRow() error {
 	values := make([]interface{}, len(w.rowValues))
 	for i, v := range w.rowValues {
-		if v == "" {
+		if !v.Valid {
 			values[i] = nil
 		} else {
-			values[i] = v
+			values[i] = v.String
 		}
 	}
 	return w.csv.WriteRow(values)
@@ -352,6 +371,9 @@ func (w *S3StreamingCSVWriter) Close() error {
 	if err := w.csv.Close(); err != nil {
 		return err
 	}
+	if w.skipUpload {
+		return nil
+	}
 
 	// Upload to S3
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -362,7 +384,11 @@ func (w *S3StreamingCSVWriter) Close() error {
 	if err != nil {
 		return fmt.Errorf("failed to open file for S3 upload: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to close local file %s: %v\n", w.localPath, err)
+		}
+	}()
 
 	// Upload to S3 via multipart upload
 	if err := w.s3.UploadStream(ctx, w.s3Key, file); err != nil {
@@ -390,7 +416,11 @@ func (w *S3StreamingCSVWriter) RowCount() int {
 
 // Remove removes the temp file
 func (w *S3StreamingCSVWriter) Remove() error {
-	return w.csv.Remove()
+	if err := w.csv.Remove(); err != nil {
+		return err
+	}
+	w.skipUpload = true
+	return nil
 }
 
 // GetLocalPath returns the local temp file path

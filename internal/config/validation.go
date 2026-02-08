@@ -95,7 +95,9 @@ func validateDirReadable(path string) error {
 	if err != nil {
 		return fmt.Errorf("directory not readable: %w", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("failed to close directory handle: %w", err)
+	}
 
 	return nil
 }
@@ -116,8 +118,12 @@ func validateDirWritable(path string) error {
 	if err != nil {
 		return fmt.Errorf("directory not writable: %w", err)
 	}
-	f.Close()
-	os.Remove(testFile)
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("failed to close write test file: %w", err)
+	}
+	if err := os.Remove(testFile); err != nil {
+		return fmt.Errorf("failed to remove write test file: %w", err)
+	}
 
 	return nil
 }

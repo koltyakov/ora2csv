@@ -72,21 +72,40 @@ func NewTestState() []types.EntityState {
 
 // WriteStateFile writes a state file to the given path
 func WriteStateFile(path string, entities []types.EntityState) error {
-	os.MkdirAll(filepath.Dir(path), 0755)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
 	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
 	for i, e := range entities {
 		if i > 0 {
-			f.WriteString(",\n")
+			if _, err := f.WriteString(",\n"); err != nil {
+				_ = f.Close()
+				return err
+			}
 		}
-		f.WriteString("  ")
-		f.WriteString(`{"entity":"` + e.Entity + `",`)
-		f.WriteString(`"lastRunTime":"` + e.LastRunTime + `",`)
-		f.WriteString(`"active":` + formatBool(e.Active) + `}`)
+		if _, err := f.WriteString("  "); err != nil {
+			_ = f.Close()
+			return err
+		}
+		if _, err := f.WriteString(`{"entity":"` + e.Entity + `",`); err != nil {
+			_ = f.Close()
+			return err
+		}
+		if _, err := f.WriteString(`"lastRunTime":"` + e.LastRunTime + `",`); err != nil {
+			_ = f.Close()
+			return err
+		}
+		if _, err := f.WriteString(`"active":` + formatBool(e.Active) + `}`); err != nil {
+			_ = f.Close()
+			return err
+		}
+	}
+	if err := f.Close(); err != nil {
+		return err
 	}
 	return nil
 }

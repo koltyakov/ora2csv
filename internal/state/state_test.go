@@ -6,6 +6,20 @@ import (
 	"testing"
 )
 
+func mustWriteFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("WriteFile(%s) error: %v", path, err)
+	}
+}
+
+func mustMkdirAll(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(path, 0755); err != nil {
+		t.Fatalf("MkdirAll(%s) error: %v", path, err)
+	}
+}
+
 func TestLoad(t *testing.T) {
 	t.Run("valid state file", func(t *testing.T) {
 		tmpDir := t.TempDir()
@@ -15,7 +29,7 @@ func TestLoad(t *testing.T) {
   {"entity":"test.entity1","lastRunTime":"2025-01-01T00:00:00","active":true},
   {"entity":"test.entity2","lastRunTime":"","active":true}
 ]`
-		os.WriteFile(statePath, []byte(testState), 0644)
+		mustWriteFile(t, statePath, testState)
 
 		st, err := Load(statePath, nil, "")
 		if err != nil {
@@ -40,7 +54,7 @@ func TestLoad(t *testing.T) {
 	t.Run("invalid JSON", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		statePath := filepath.Join(tmpDir, "state.json")
-		os.WriteFile(statePath, []byte("invalid json"), 0644)
+		mustWriteFile(t, statePath, "invalid json")
 
 		_, err := Load(statePath, nil, "")
 		if err == nil {
@@ -58,7 +72,7 @@ func TestGetEntities(t *testing.T) {
   {"entity":"test.entity2","lastRunTime":"","active":true},
   {"entity":"test.entity3","lastRunTime":"2025-01-01T00:00:00","active":false}
 ]`
-	os.WriteFile(statePath, []byte(testState), 0644)
+	mustWriteFile(t, statePath, testState)
 
 	st, err := Load(statePath, nil, "")
 	if err != nil {
@@ -87,7 +101,7 @@ func TestGetActiveEntities(t *testing.T) {
   {"entity":"test.entity2","lastRunTime":"","active":true},
   {"entity":"test.entity3","lastRunTime":"2025-01-01T00:00:00","active":false}
 ]`
-	os.WriteFile(statePath, []byte(testState), 0644)
+	mustWriteFile(t, statePath, testState)
 
 	st, err := Load(statePath, nil, "")
 	if err != nil {
@@ -115,7 +129,7 @@ func TestFindEntity(t *testing.T) {
   {"entity":"test.entity2","lastRunTime":"","active":true},
   {"entity":"test.entity3","lastRunTime":"2025-01-01T00:00:00","active":false}
 ]`
-	os.WriteFile(statePath, []byte(testState), 0644)
+	mustWriteFile(t, statePath, testState)
 
 	st, err := Load(statePath, nil, "")
 	if err != nil {
@@ -151,7 +165,7 @@ func TestUpdateEntityTimestamp(t *testing.T) {
   {"entity":"test.entity1","lastRunTime":"2025-01-01T00:00:00","active":true},
   {"entity":"test.entity2","lastRunTime":"","active":true}
 ]`
-	os.WriteFile(statePath, []byte(testState), 0644)
+	mustWriteFile(t, statePath, testState)
 
 	st, err := Load(statePath, nil, "")
 	if err != nil {
@@ -183,7 +197,7 @@ func TestUpdateEntityTimestamp_NotFound(t *testing.T) {
 	statePath := filepath.Join(tmpDir, "state.json")
 
 	testState := `[{"entity":"test.entity1","lastRunTime":"2025-01-01T00:00:00","active":true}]`
-	os.WriteFile(statePath, []byte(testState), 0644)
+	mustWriteFile(t, statePath, testState)
 
 	st, err := Load(statePath, nil, "")
 	if err != nil {
@@ -206,10 +220,10 @@ func TestValidateSQLFiles(t *testing.T) {
   {"entity":"test.entity1","lastRunTime":"","active":true},
   {"entity":"test.entity2","lastRunTime":"","active":true}
 ]`
-		os.WriteFile(statePath, []byte(testState), 0644)
-		os.MkdirAll(sqlDir, 0755)
-		os.WriteFile(filepath.Join(sqlDir, "test.entity1.sql"), []byte("SELECT 1"), 0644)
-		os.WriteFile(filepath.Join(sqlDir, "test.entity2.sql"), []byte("SELECT 2"), 0644)
+		mustWriteFile(t, statePath, testState)
+		mustMkdirAll(t, sqlDir)
+		mustWriteFile(t, filepath.Join(sqlDir, "test.entity1.sql"), "SELECT 1")
+		mustWriteFile(t, filepath.Join(sqlDir, "test.entity2.sql"), "SELECT 2")
 
 		st, err := Load(statePath, nil, "")
 		if err != nil {
@@ -228,8 +242,8 @@ func TestValidateSQLFiles(t *testing.T) {
 		sqlDir := filepath.Join(tmpDir, "sql")
 
 		testState := `[{"entity":"test.entity1","lastRunTime":"","active":true}]`
-		os.WriteFile(statePath, []byte(testState), 0644)
-		os.MkdirAll(sqlDir, 0755)
+		mustWriteFile(t, statePath, testState)
+		mustMkdirAll(t, sqlDir)
 		// Don't create SQL files
 
 		st, err := Load(statePath, nil, "")
@@ -253,9 +267,9 @@ func TestValidateSQLFiles(t *testing.T) {
   {"entity":"test.active1","lastRunTime":"","active":true},
   {"entity":"test.inactive1","lastRunTime":"","active":false}
 ]`
-		os.WriteFile(statePath, []byte(testState), 0644)
-		os.MkdirAll(sqlDir, 0755)
-		os.WriteFile(filepath.Join(sqlDir, "test.active1.sql"), []byte("SELECT 1"), 0644)
+		mustWriteFile(t, statePath, testState)
+		mustMkdirAll(t, sqlDir)
+		mustWriteFile(t, filepath.Join(sqlDir, "test.active1.sql"), "SELECT 1")
 
 		st, err := Load(statePath, nil, "")
 		if err != nil {
@@ -287,7 +301,7 @@ func TestTotalCount(t *testing.T) {
   {"entity":"test.entity2","lastRunTime":"","active":true},
   {"entity":"test.entity3","lastRunTime":"","active":false}
 ]`
-	os.WriteFile(statePath, []byte(testState), 0644)
+	mustWriteFile(t, statePath, testState)
 
 	st, err := Load(statePath, nil, "")
 	if err != nil {
@@ -308,7 +322,7 @@ func TestActiveCount(t *testing.T) {
   {"entity":"test.entity2","lastRunTime":"","active":true},
   {"entity":"test.entity3","lastRunTime":"","active":false}
 ]`
-	os.WriteFile(statePath, []byte(testState), 0644)
+	mustWriteFile(t, statePath, testState)
 
 	st, err := Load(statePath, nil, "")
 	if err != nil {
@@ -330,7 +344,7 @@ func TestSave_SortsEntities(t *testing.T) {
   {"entity":"alpha","lastRunTime":"","active":true},
   {"entity":"beta","lastRunTime":"","active":true}
 ]`
-	os.WriteFile(statePath, []byte(unsortedState), 0644)
+	mustWriteFile(t, statePath, unsortedState)
 
 	st, err := Load(statePath, nil, "")
 	if err != nil {
@@ -371,7 +385,7 @@ func TestSave_Atomic(t *testing.T) {
 	statePath := filepath.Join(tmpDir, "state.json")
 
 	testState := `[{"entity":"test.entity1","lastRunTime":"","active":true}]`
-	os.WriteFile(statePath, []byte(testState), 0644)
+	mustWriteFile(t, statePath, testState)
 
 	st, err := Load(statePath, nil, "")
 	if err != nil {

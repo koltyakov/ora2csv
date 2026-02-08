@@ -141,19 +141,27 @@ func (s *S3Client) DownloadStream(ctx context.Context, key string) (io.ReadClose
 }
 
 // DownloadFile downloads an object from S3 and writes it to a local file
-func (s *S3Client) DownloadFile(ctx context.Context, key, path string) error {
+func (s *S3Client) DownloadFile(ctx context.Context, key, path string) (retErr error) {
 	reader, err := s.DownloadStream(ctx, key)
 	if err != nil {
 		return err
 	}
-	defer reader.Close()
+	defer func() {
+		if err := reader.Close(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("failed to close S3 download stream: %w", err))
+		}
+	}()
 
 	// Create the file
 	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("failed to create file %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("failed to close file %s: %w", path, err))
+		}
+	}()
 
 	// Copy the data
 	_, err = io.Copy(f, reader)
@@ -230,14 +238,22 @@ func (s *S3Client) UploadBytes(ctx context.Context, key string, data []byte) err
 }
 
 // DownloadBytes downloads an object from S3 as a byte slice
-func (s *S3Client) DownloadBytes(ctx context.Context, key string) ([]byte, error) {
+func (s *S3Client) DownloadBytes(ctx context.Context, key string) (data []byte, retErr error) {
 	reader, err := s.DownloadStream(ctx, key)
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
+	defer func() {
+		if err := reader.Close(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("failed to close S3 download stream: %w", err))
+		}
+	}()
 
-	return io.ReadAll(reader)
+	data, err = io.ReadAll(reader)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 // CheckConnection verifies S3 connectivity and PutObject permissions

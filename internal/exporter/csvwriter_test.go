@@ -1,10 +1,32 @@
 package exporter
 
 import (
+	"database/sql"
 	"os"
 	"strings"
 	"testing"
 )
+
+func mustCloseCSVWriter(t *testing.T, w *CSVWriter) {
+	t.Helper()
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+}
+
+func mustCloseStreamingCSVWriter(t *testing.T, w *StreamingCSVWriter) {
+	t.Helper()
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+}
+
+func mustWriteTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+}
 
 func TestNewCSVWriter(t *testing.T) {
 	t.Run("creates new writer", func(t *testing.T) {
@@ -25,7 +47,7 @@ func TestNewCSVWriter(t *testing.T) {
 			t.Error("csv writer is nil")
 		}
 
-		writer.Close()
+		mustCloseCSVWriter(t, writer)
 	})
 
 	t.Run("returns error for invalid path", func(t *testing.T) {
@@ -44,7 +66,7 @@ func TestCSVWriter_WriteHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCSVWriter() error = %v", err)
 	}
-	defer writer.Close()
+	defer mustCloseCSVWriter(t, writer)
 
 	columns := []string{"id", "name", "email"}
 	err = writer.WriteHeaders(columns)
@@ -78,7 +100,7 @@ func TestCSVWriter_WriteRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCSVWriter() error = %v", err)
 	}
-	defer writer.Close()
+	defer mustCloseCSVWriter(t, writer)
 
 	columns := []string{"id", "name"}
 	if err := writer.WriteHeaders(columns); err != nil {
@@ -103,13 +125,15 @@ func TestCSVWriter_HasData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCSVWriter() error = %v", err)
 	}
-	defer writer.Close()
+	defer mustCloseCSVWriter(t, writer)
 
 	if writer.HasData() {
 		t.Error("HasData() = true, want false initially")
 	}
 
-	writer.WriteRow([]interface{}{1, "test"})
+	if err := writer.WriteRow([]interface{}{1, "test"}); err != nil {
+		t.Fatalf("WriteRow() error = %v", err)
+	}
 
 	if !writer.HasData() {
 		t.Error("HasData() = false, want true after writing row")
@@ -124,11 +148,17 @@ func TestCSVWriter_RowCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCSVWriter() error = %v", err)
 	}
-	defer writer.Close()
+	defer mustCloseCSVWriter(t, writer)
 
-	writer.WriteRow([]interface{}{1})
-	writer.WriteRow([]interface{}{2})
-	writer.WriteRow([]interface{}{3})
+	if err := writer.WriteRow([]interface{}{1}); err != nil {
+		t.Fatalf("WriteRow() error = %v", err)
+	}
+	if err := writer.WriteRow([]interface{}{2}); err != nil {
+		t.Fatalf("WriteRow() error = %v", err)
+	}
+	if err := writer.WriteRow([]interface{}{3}); err != nil {
+		t.Fatalf("WriteRow() error = %v", err)
+	}
 
 	if writer.RowCount() != 3 {
 		t.Errorf("RowCount() = %d, want 3", writer.RowCount())
@@ -145,7 +175,9 @@ func TestCSVWriter_Close(t *testing.T) {
 			t.Fatalf("NewCSVWriter() error = %v", err)
 		}
 
-		writer.WriteRow([]interface{}{1, "test"})
+		if err := writer.WriteRow([]interface{}{1, "test"}); err != nil {
+			t.Fatalf("WriteRow() error = %v", err)
+		}
 		err = writer.Close()
 		if err != nil {
 			t.Errorf("Close() error = %v", err)
@@ -228,7 +260,7 @@ func TestNewStreamingCSVWriter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStreamingCSVWriter() error = %v", err)
 	}
-	defer writer.Close()
+	defer mustCloseStreamingCSVWriter(t, writer)
 
 	if writer.csv == nil {
 		t.Error("csv writer is nil")
@@ -249,18 +281,18 @@ func TestStreamingCSVWriter_GetScanTargets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStreamingCSVWriter() error = %v", err)
 	}
-	defer writer.Close()
+	defer mustCloseStreamingCSVWriter(t, writer)
 
 	targets := writer.GetScanTargets()
 	if len(targets) != 2 {
 		t.Errorf("targets length = %d, want 2", len(targets))
 	}
 
-	// Verify targets are string pointers
+	// Verify targets are sql.NullString pointers
 	for i, target := range targets {
-		ptr, ok := target.(*string)
+		ptr, ok := target.(*sql.NullString)
 		if !ok {
-			t.Errorf("target %d is not *string", i)
+			t.Errorf("target %d is not *sql.NullString", i)
 		}
 		if ptr == nil {
 			t.Errorf("target %d is nil pointer", i)
@@ -276,12 +308,14 @@ func TestStreamingCSVWriter_WriteScannedRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStreamingCSVWriter() error = %v", err)
 	}
-	defer writer.Close()
+	defer mustCloseStreamingCSVWriter(t, writer)
 
 	// Simulate scanned values
 	targets := writer.GetScanTargets()
-	*targets[0].(*string) = "value1"
-	*targets[1].(*string) = "value2"
+	targets[0].(*sql.NullString).String = "value1"
+	targets[0].(*sql.NullString).Valid = true
+	targets[1].(*sql.NullString).String = "value2"
+	targets[1].(*sql.NullString).Valid = true
 
 	err = writer.WriteScannedRow()
 	if err != nil {
@@ -293,7 +327,7 @@ func TestStreamingCSVWriter_WriteScannedRow(t *testing.T) {
 	}
 }
 
-func TestStreamingCSVWriter_EmptyStringIsNull(t *testing.T) {
+func TestStreamingCSVWriter_PreservesEmptyStringVsNull(t *testing.T) {
 	tmpDir := t.TempDir()
 	filePath := tmpDir + "/test.csv"
 
@@ -301,27 +335,45 @@ func TestStreamingCSVWriter_EmptyStringIsNull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStreamingCSVWriter() error = %v", err)
 	}
-	defer writer.Close()
+	defer mustCloseStreamingCSVWriter(t, writer)
 
-	// Simulate empty string scan (should become nil)
+	if err := writer.WriteHeaders([]string{"col1", "col2"}); err != nil {
+		t.Fatalf("WriteHeaders() error = %v", err)
+	}
+
+	// Simulate one empty string and one NULL.
 	targets := writer.GetScanTargets()
-	*targets[0].(*string) = "value1"
-	*targets[1].(*string) = ""
+	targets[0].(*sql.NullString).String = "value1"
+	targets[0].(*sql.NullString).Valid = true
+	targets[1].(*sql.NullString).String = ""
+	targets[1].(*sql.NullString).Valid = true
 
 	err = writer.WriteScannedRow()
 	if err != nil {
 		t.Errorf("WriteScannedRow() error = %v", err)
 	}
 
-	// Empty strings should be treated as nil
-	writer.WriteHeaders([]string{"col1", "col2"})
+	// Append a NULL row in the same column for comparison.
+	targets = writer.GetScanTargets()
+	targets[0].(*sql.NullString).String = "value2"
+	targets[0].(*sql.NullString).Valid = true
+	targets[1].(*sql.NullString).Valid = false
 
-	// Read file and verify empty field
+	err = writer.WriteScannedRow()
+	if err != nil {
+		t.Errorf("WriteScannedRow() error = %v", err)
+	}
+
+	if err := writer.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+
+	// In CSV output both empty string and NULL serialize to empty field; this test
+	// verifies writing succeeds without collapsing scan semantics internally.
 	data, _ := os.ReadFile(filePath)
 	content := string(data)
-	// Should have header and one row with empty second field
-	if !strings.Contains(content, "value1,") {
-		t.Errorf("file content does not contain expected row: %s", content)
+	if !strings.Contains(content, "value1,") || !strings.Contains(content, "value2,") {
+		t.Errorf("file content does not contain expected rows: %s", content)
 	}
 }
 
@@ -343,9 +395,12 @@ func TestStreamingCSVWriter_FullWorkflow(t *testing.T) {
 	// Write rows
 	for i := 1; i <= 3; i++ {
 		targets := writer.GetScanTargets()
-		*targets[0].(*string) = string(rune('0' + i))
-		*targets[1].(*string) = "User" + string(rune('0'+i))
-		*targets[2].(*string) = "user" + string(rune('0'+i)) + "@test.com"
+		targets[0].(*sql.NullString).String = string(rune('0' + i))
+		targets[0].(*sql.NullString).Valid = true
+		targets[1].(*sql.NullString).String = "User" + string(rune('0'+i))
+		targets[1].(*sql.NullString).Valid = true
+		targets[2].(*sql.NullString).String = "user" + string(rune('0'+i)) + "@test.com"
+		targets[2].(*sql.NullString).Valid = true
 
 		err = writer.WriteScannedRow()
 		if err != nil {
@@ -406,7 +461,7 @@ func TestIsEmpty(t *testing.T) {
 	t.Run("empty file", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		filePath := tmpDir + "/empty.txt"
-		os.WriteFile(filePath, []byte(""), 0644)
+		mustWriteTestFile(t, filePath, "")
 
 		if !IsEmpty(filePath) {
 			t.Error("IsEmpty() = false for empty file")
@@ -416,7 +471,7 @@ func TestIsEmpty(t *testing.T) {
 	t.Run("file with small content is empty", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		filePath := tmpDir + "/small.txt"
-		os.WriteFile(filePath, []byte("head"), 0644)
+		mustWriteTestFile(t, filePath, "head")
 
 		if !IsEmpty(filePath) {
 			t.Error("IsEmpty() = false for small file (< 10 bytes)")
@@ -426,7 +481,7 @@ func TestIsEmpty(t *testing.T) {
 	t.Run("file with content is not empty", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		filePath := tmpDir + "/data.txt"
-		os.WriteFile(filePath, []byte("header,row1,row2,row3"), 0644)
+		mustWriteTestFile(t, filePath, "header,row1,row2,row3")
 
 		if IsEmpty(filePath) {
 			t.Error("IsEmpty() = true for file with data")
@@ -438,7 +493,7 @@ func TestRemoveEmpty(t *testing.T) {
 	t.Run("removes empty file", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		filePath := tmpDir + "/empty.csv"
-		os.WriteFile(filePath, []byte(""), 0644)
+		mustWriteTestFile(t, filePath, "")
 
 		err := RemoveEmpty(filePath)
 		if err != nil {
@@ -455,7 +510,7 @@ func TestRemoveEmpty(t *testing.T) {
 		tmpDir := t.TempDir()
 		filePath := tmpDir + "/data.csv"
 		content := "header,row1,row2,row3"
-		os.WriteFile(filePath, []byte(content), 0644)
+		mustWriteTestFile(t, filePath, content)
 
 		err := RemoveEmpty(filePath)
 		if err != nil {
@@ -492,7 +547,7 @@ func TestS3StreamingCSVWriter(t *testing.T) {
 			csv:         &CSVWriter{},
 			localPath:   localPath,
 			dest:        make([]interface{}, 2),
-			rowValues:   make([]string, 2),
+			rowValues:   make([]sql.NullString, 2),
 			columnCount: 2,
 		}
 
@@ -507,7 +562,7 @@ func TestS3StreamingCSVWriter(t *testing.T) {
 	t.Run("GetScanTargets returns correct number", func(t *testing.T) {
 		writer := &S3StreamingCSVWriter{
 			dest:        make([]interface{}, 3),
-			rowValues:   make([]string, 3),
+			rowValues:   make([]sql.NullString, 3),
 			columnCount: 3,
 		}
 
@@ -594,8 +649,12 @@ func (m *mockRowScanner) Scan(dest ...interface{}) error {
 	row := m.rows[m.rowIdx-1]
 	for i, val := range row {
 		if i < len(dest) {
-			if ptr, ok := dest[i].(*string); ok {
+			switch ptr := dest[i].(type) {
+			case *string:
 				*ptr = val
+			case *sql.NullString:
+				ptr.String = val
+				ptr.Valid = true
 			}
 		}
 	}

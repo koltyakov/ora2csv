@@ -88,19 +88,8 @@ func main() {
 }
 
 // setupContext creates a context with cancellation and signal handling
-func setupContext() context.Context {
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Set up signal handling
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		fmt.Println("\nReceived interrupt signal, shutting down...")
-		cancel()
-	}()
-
-	return ctx
+func setupContext() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
 // connectDatabase establishes a connection to the Oracle database
@@ -123,26 +112,10 @@ func connectDatabase(ctx context.Context, cfg *config.Config) (*db.OracleDB, err
 }
 
 // executeExport runs the export process
-func executeExport(ctx context.Context, cfg *config.Config, database *db.OracleDB, st *state.File, logger *logging.Logger) (*types.ExportResult, error) {
-	// Create query timeout context
-	queryCtx, queryCancel := context.WithTimeout(ctx, cfg.QueryTimeout)
-	defer queryCancel()
-
-	// Initialize S3 client if enabled
-	var s3Client *storage.S3Client
-	if cfg.S3.Bucket != "" {
-		logger.Info("Initializing S3 client (bucket: %s)", cfg.S3.Bucket)
-		client, err := storage.NewS3Client(&cfg.S3)
-		if err != nil {
-			return nil, fmt.Errorf("failed to initialize S3 client: %w", err)
-		}
-		s3Client = client
-		logger.Info("S3 client initialized")
-	}
-
+func executeExport(ctx context.Context, cfg *config.Config, database *db.OracleDB, st *state.File, logger *logging.Logger, s3Client *storage.S3Client) (*types.ExportResult, error) {
 	// Create and run exporter
 	exp := exporter.New(cfg, database, st, logger, s3Client)
-	return exp.Run(queryCtx)
+	return exp.Run(ctx)
 }
 
 // printSummary prints the export result summary
@@ -176,21 +149,22 @@ func printSummary(result *types.ExportResult, cfg *config.Config, logger *loggin
 
 func runExport(cmd *cobra.Command, args []string) error {
 	// Load configuration
-	cfg := config.FromCommand(cmd)
+	cfg, err := config.FromCommand(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
 
 	// Setup context with signal handling
-	ctx := setupContext()
-	defer func() {
-		// Cancel context to ensure goroutines exit
-		select {
-		case <-ctx.Done():
-		default:
-		}
-	}()
+	ctx, cancel := setupContext()
+	defer cancel()
 
 	// Create logger
 	logger := logging.New(cfg.Verbose)
-	defer logger.Close()
+	defer func() {
+		if closeErr := logger.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to close logger: %v\n", closeErr)
+		}
+	}()
 
 	logger.Info("Starting ora2csv v%s (built: %s)", version, buildTime)
 
@@ -217,11 +191,11 @@ func runExport(cmd *cobra.Command, args []string) error {
 		// Check S3 connectivity before starting export
 		logger.Info("Checking S3 connectivity...")
 		checkCtx, checkCancel := context.WithTimeout(ctx, 10*time.Second)
+		defer checkCancel()
 		if err := s3Client.CheckConnection(checkCtx); err != nil {
 			logger.Error("S3 connectivity check failed: %v", err)
 			return fmt.Errorf("S3 connectivity check failed: %w", err)
 		}
-		checkCancel()
 		logger.Info("S3 connectivity verified")
 	}
 
@@ -261,12 +235,16 @@ func runExport(cmd *cobra.Command, args []string) error {
 		logger.Error("Failed to connect to database: %v", err)
 		return err
 	}
-	defer database.Close()
+	defer func() {
+		if closeErr := database.Close(); closeErr != nil {
+			logger.Error("Failed to close database connection: %v", closeErr)
+		}
+	}()
 
 	logger.Info("Database connection established")
 
 	// Execute export
-	result, err := executeExport(ctx, cfg, database, st, logger)
+	result, err := executeExport(ctx, cfg, database, st, logger, s3Client)
 	if err != nil {
 		logger.Error("Export failed: %v", err)
 		return err
@@ -285,10 +263,17 @@ func runExport(cmd *cobra.Command, args []string) error {
 }
 
 func runValidate(cmd *cobra.Command, args []string) error {
-	cfg := config.FromCommand(cmd)
+	cfg, err := config.FromCommand(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
 
 	logger := logging.New(cfg.Verbose)
-	defer logger.Close()
+	defer func() {
+		if closeErr := logger.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to close logger: %v\n", closeErr)
+		}
+	}()
 
 	logger.Info("Validating ora2csv configuration")
 

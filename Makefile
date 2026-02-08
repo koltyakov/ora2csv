@@ -95,6 +95,8 @@ fmt:
 lint:
 	@echo "Running linter..."
 	@if command -v golangci-lint >/dev/null 2>&1; then \
+		GOCACHE=$${GOCACHE:-/tmp/go-build-cache} \
+		GOLANGCI_LINT_CACHE=$${GOLANGCI_LINT_CACHE:-/tmp/golangci-lint-cache} \
 		golangci-lint run ./...; \
 	else \
 		echo "golangci-lint not found. Install from https://golangci-lint.run/usage/install/"; \

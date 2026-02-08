@@ -162,7 +162,9 @@ func (f *File) save() error {
 
 	// Atomic rename
 	if err := os.Rename(tmpPath, f.path); err != nil {
-		os.Remove(tmpPath) // Clean up temp file
+		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			return fmt.Errorf("failed to rename temp file: %w (additionally failed to remove temp file: %v)", err, removeErr)
+		}
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 

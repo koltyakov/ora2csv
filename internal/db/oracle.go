@@ -51,7 +51,9 @@ func ConnectString(ctx context.Context, connString, user, password string, timeo
 	// Open database using the connector
 	sqlDB := sql.OpenDB(connector)
 	if err := sqlDB.PingContext(ctx); err != nil {
-		sqlDB.Close()
+		if closeErr := sqlDB.Close(); closeErr != nil {
+			return nil, fmt.Errorf("failed to connect to database: %w (additionally failed to close database handle: %v)", err, closeErr)
+		}
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 

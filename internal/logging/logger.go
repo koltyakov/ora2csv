@@ -20,11 +20,12 @@ const (
 
 // Logger provides thread-safe logging with timestamps
 type Logger struct {
-	mu     sync.Mutex
+	mu     *sync.Mutex
 	writer io.Writer
 	level  Level
 	file   *os.File
 	prefix string
+	std    *log.Logger
 }
 
 // New creates a new Logger
@@ -33,10 +34,13 @@ func New(verbose bool) *Logger {
 	if verbose {
 		level = LevelDebug
 	}
+	writer := os.Stdout
 
 	return &Logger{
-		writer: os.Stdout,
+		mu:     &sync.Mutex{},
+		writer: writer,
 		level:  level,
+		std:    log.New(writer, "", 0),
 	}
 }
 
@@ -56,9 +60,11 @@ func NewWithFile(path string, verbose bool) (*Logger, error) {
 	}
 
 	return &Logger{
+		mu:     &sync.Mutex{},
 		writer: multiWriter,
 		level:  level,
 		file:   file,
+		std:    log.New(multiWriter, "", 0),
 	}, nil
 }
 
@@ -97,7 +103,7 @@ func (l *Logger) log(level Level, format string, args ...interface{}) {
 	}
 
 	msg := fmt.Sprintf(format, args...)
-	log.Printf("[%s] %s%s\n", l.formatTimestamp(), prefix, msg)
+	l.std.Printf("[%s] %s%s\n", l.formatTimestamp(), prefix, msg)
 }
 
 // Info logs an info message
@@ -118,10 +124,12 @@ func (l *Logger) Debug(format string, args ...interface{}) {
 // WithPrefix returns a new logger with the given prefix
 func (l *Logger) WithPrefix(prefix string) *Logger {
 	return &Logger{
+		mu:     l.mu,
 		writer: l.writer,
 		level:  l.level,
 		file:   l.file,
 		prefix: prefix,
+		std:    l.std,
 	}
 }
 

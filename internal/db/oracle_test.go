@@ -174,7 +174,9 @@ func TestMockRowScanner_AddRow(t *testing.T) {
 		t.Fatal("Next() returned false, want true")
 	}
 	var id, name string
-	scanner.Scan(&id, &name)
+	if err := scanner.Scan(&id, &name); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if id != "1" {
 		t.Errorf("got id %q, want %q", id, "1")
 	}

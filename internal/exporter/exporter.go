@@ -2,6 +2,7 @@ package exporter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,14 +20,14 @@ import (
 // Exporter handles the main export orchestration
 type Exporter struct {
 	cfg    *config.Config
-	db     *db.OracleDB
+	db     db.DB
 	st     *state.File
 	logger *logging.Logger
 	s3     *storage.S3Client
 }
 
 // New creates a new Exporter
-func New(cfg *config.Config, database *db.OracleDB, st *state.File, logger *logging.Logger, s3 *storage.S3Client) *Exporter {
+func New(cfg *config.Config, database db.DB, st *state.File, logger *logging.Logger, s3 *storage.S3Client) *Exporter {
 	return &Exporter{
 		cfg:    cfg,
 		db:     database,
@@ -40,48 +41,55 @@ func New(cfg *config.Config, database *db.OracleDB, st *state.File, logger *logg
 func (e *Exporter) Run(ctx context.Context) (*types.ExportResult, error) {
 	startTime := time.Now()
 	result := &types.ExportResult{
-		Results: make([]types.EntityResult, 0),
+		Results: make([]types.EntityResult, 0, e.st.ActiveCount()),
 	}
 
 	e.logger.Info("Starting data export process")
 	e.logger.Info("Total entities: %d, Active: %d", e.st.TotalCount(), e.st.ActiveCount())
 
 	// Capture till date once for all entities (use UTC to avoid timezone issues)
-	tillDate := time.Now().UTC()
-	tillDateStr := tillDate.Format("2006-01-02T15:04:05")
+	tillDateStr := time.Now().UTC().Format("2006-01-02T15:04:05")
 	e.logger.Info("Using till date for all entities: %s", tillDateStr)
 
 	// Process each active entity
 	for _, entity := range e.st.GetActiveEntities() {
-		entityResult := e.processEntity(ctx, entity, tillDate, tillDateStr)
+		if err := ctx.Err(); err != nil {
+			result.TotalEntities = e.st.TotalCount()
+			result.SkippedCount = result.TotalEntities - result.ProcessedCount
+			result.Duration = time.Since(startTime)
+			return result, fmt.Errorf("export interrupted: %w", err)
+		}
+
+		entityResult := e.processEntity(ctx, entity, tillDateStr)
+
+		// Update state only on success
+		if entityResult.Success {
+			if err := e.st.UpdateEntityTimestamp(entity.Entity, tillDateStr); err != nil {
+				e.logger.Error("Failed to update state for %s: %v", entity.Entity, err)
+				entityResult.Success = false
+				entityResult.Error = fmt.Errorf("failed to update state for %s: %w", entity.Entity, err)
+			}
+		}
+
 		result.Results = append(result.Results, entityResult)
 		result.ProcessedCount++
 
 		if entityResult.Success {
 			result.SuccessCount++
-			// Update state only on success
-			if err := e.st.UpdateEntityTimestamp(entity.Entity, tillDateStr); err != nil {
-				e.logger.Error("Failed to update state for %s: %v", entity.Entity, err)
-				result.TotalEntities = e.st.TotalCount()
-				result.Duration = time.Since(startTime)
-				return result, fmt.Errorf("failed to update state for %s: %w", entity.Entity, err)
-			}
 		} else {
 			result.FailedCount++
-			result.TotalEntities = e.st.TotalCount()
-			result.Duration = time.Since(startTime)
-			return result, fmt.Errorf("entity %s failed: %w", entity.Entity, entityResult.Error)
 		}
 	}
 
 	result.TotalEntities = e.st.TotalCount()
+	result.SkippedCount = result.TotalEntities - result.ProcessedCount
 	result.Duration = time.Since(startTime)
 
 	return result, nil
 }
 
 // processEntity handles the export of a single entity
-func (e *Exporter) processEntity(ctx context.Context, entity types.EntityState, tillDate time.Time, tillDateStr string) types.EntityResult {
+func (e *Exporter) processEntity(ctx context.Context, entity types.EntityState, tillDateStr string) types.EntityResult {
 	startTime := time.Now()
 	log := e.logger.WithEntity(entity.Entity)
 
@@ -130,7 +138,10 @@ func (e *Exporter) processEntity(ctx context.Context, entity types.EntityState, 
 	}
 
 	// Execute query and stream to CSV
-	rowCount, err := e.executeQueryToCSV(ctx, sqlContent, startDateStr, tillDateStr, outputFile, log)
+	entityCtx, entityCancel := context.WithTimeout(ctx, e.cfg.QueryTimeout)
+	defer entityCancel()
+
+	rowCount, err := e.executeQueryToCSV(entityCtx, sqlContent, startDateStr, tillDateStr, outputFile, log)
 	if err != nil {
 		log.Error("Failed to execute query: %v", err)
 		return types.EntityResult{
@@ -199,7 +210,7 @@ func (e *Exporter) getOutputPath(entityName, startDate string) string {
 }
 
 // executeQueryToCSV executes a query and streams results to CSV
-func (e *Exporter) executeQueryToCSV(ctx context.Context, sqlContent, startDate, tillDate, outputPath string, log *logging.Logger) (int, error) {
+func (e *Exporter) executeQueryToCSV(ctx context.Context, sqlContent, startDate, tillDate, outputPath string, log *logging.Logger) (rowCount int, retErr error) {
 	// Prepare query parameters
 	params := map[string]interface{}{
 		"startDate": startDate,
@@ -211,11 +222,15 @@ func (e *Exporter) executeQueryToCSV(ctx context.Context, sqlContent, startDate,
 	if err != nil {
 		return 0, fmt.Errorf("query execution failed: %w", err)
 	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("failed to close rows: %w", err))
+		}
+	}()
 
 	// Get column count
 	columns, err := rows.Columns()
 	if err != nil {
-		rows.Close()
 		return 0, fmt.Errorf("failed to get columns: %w", err)
 	}
 
@@ -234,21 +249,31 @@ func (e *Exporter) executeQueryToCSV(ctx context.Context, sqlContent, startDate,
 		// Create S3 streaming writer
 		w, err := NewS3StreamingCSVWriter(e.s3, s3Key, outputPath, len(columns))
 		if err != nil {
-			rows.Close()
 			return 0, fmt.Errorf("failed to create S3 CSV writer: %w", err)
 		}
-		defer w.Close()
 		writer = w
 	} else {
 		// Create local file writer
 		w, err := NewStreamingCSVWriter(outputPath, len(columns))
 		if err != nil {
-			rows.Close()
 			return 0, fmt.Errorf("failed to create CSV writer: %w", err)
 		}
-		defer w.Close()
 		writer = w
 	}
+	writeComplete := false
+	defer func() {
+		if writer == nil {
+			return
+		}
+		if !writeComplete {
+			if err := writer.Remove(); err != nil {
+				retErr = errors.Join(retErr, fmt.Errorf("failed to remove incomplete output: %w", err))
+			}
+		}
+		if err := writer.Close(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("failed to finalize output: %w", err))
+		}
+	}()
 
 	// Write headers
 	if err := writer.WriteHeaders(columns); err != nil {
@@ -257,7 +282,6 @@ func (e *Exporter) executeQueryToCSV(ctx context.Context, sqlContent, startDate,
 
 	// Stream rows
 	scanTargets := writer.GetScanTargets()
-	rowCount := 0
 	for rows.Next() {
 		if err := rows.Scan(scanTargets...); err != nil {
 			return 0, fmt.Errorf("failed to scan row: %w", err)
@@ -285,9 +309,12 @@ func (e *Exporter) executeQueryToCSV(ctx context.Context, sqlContent, startDate,
 
 	// If no data rows, remove the file
 	if rowCount == 0 {
-		writer.Remove()
+		if err := writer.Remove(); err != nil {
+			return 0, fmt.Errorf("failed to remove empty output file: %w", err)
+		}
 	}
 
+	writeComplete = true
 	return rowCount, nil
 }
 
@@ -323,10 +350,15 @@ func Validate(cfg *config.Config, st *state.File, testDB bool) error {
 		if err != nil {
 			return fmt.Errorf("database connection failed: %w", err)
 		}
-		defer database.Close()
 
 		if err := database.Ping(ctx); err != nil {
+			if closeErr := database.Close(); closeErr != nil {
+				return fmt.Errorf("database ping failed: %w (additionally failed to close database connection: %v)", err, closeErr)
+			}
 			return fmt.Errorf("database ping failed: %w", err)
+		}
+		if err := database.Close(); err != nil {
+			return fmt.Errorf("failed to close database connection: %w", err)
 		}
 	}
 

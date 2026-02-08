@@ -44,7 +44,9 @@ func TestNewWithFile(t *testing.T) {
 		}
 
 		// Clean up
-		logger.Close()
+		if err := logger.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
 	})
 
 	t.Run("returns error for invalid path", func(t *testing.T) {
@@ -329,7 +331,9 @@ func TestLogger_CloseIdempotent(t *testing.T) {
 
 	// Close multiple times - first closes the file, second will return error
 	// but should not panic
-	logger.Close()
+	if err := logger.Close(); err != nil {
+		t.Fatalf("first Close() error = %v", err)
+	}
 	err = logger.Close()
 	// Second close may return "file already closed" error which is expected behavior
 	// The important thing is that it doesn't panic

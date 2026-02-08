@@ -102,8 +102,12 @@ func (m *MockRowScanner) Scan(dest ...interface{}) error {
 	row := m.Rows[m.currentRow]
 	for i, val := range row {
 		if i < len(dest) {
-			if ptr, ok := dest[i].(*string); ok {
+			switch ptr := dest[i].(type) {
+			case *string:
 				*ptr = val
+			case *sql.NullString:
+				ptr.String = val
+				ptr.Valid = true
 			}
 		}
 	}

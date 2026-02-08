@@ -381,7 +381,9 @@ func TestLocalFileOperations(t *testing.T) {
 		tmpDir := t.TempDir()
 		testFile := tmpDir + "/temp.csv"
 
-		os.WriteFile(testFile, []byte("data"), 0644)
+		if err := os.WriteFile(testFile, []byte("data"), 0644); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
 
 		// Simulate successful S3 upload followed by cleanup
 		err := os.Remove(testFile)

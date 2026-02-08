@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -10,7 +9,7 @@ import (
 )
 
 // FromCommand loads configuration from cobra command flags and environment variables
-func FromCommand(cmd *cobra.Command) *Config {
+func FromCommand(cmd *cobra.Command) (*Config, error) {
 	v := viper.New()
 
 	// Bind flags to viper
@@ -49,12 +48,20 @@ func FromCommand(cmd *cobra.Command) *Config {
 	// Enable environment variable reading
 	v.SetEnvPrefix(EnvPrefix)
 	v.AutomaticEnv()
-	v.BindEnv("db_password", EnvDBPassword)
+	if err := v.BindEnv("db_password", EnvDBPassword); err != nil {
+		return nil, fmt.Errorf("failed to bind db password env var: %w", err)
+	}
 
 	// S3 environment variable bindings
-	v.BindEnv("s3_bucket", EnvS3Bucket)
-	v.BindEnv("s3_prefix", EnvS3Prefix)
-	v.BindEnv("s3_endpoint", EnvS3Endpoint)
+	if err := v.BindEnv("s3_bucket", EnvS3Bucket); err != nil {
+		return nil, fmt.Errorf("failed to bind s3 bucket env var: %w", err)
+	}
+	if err := v.BindEnv("s3_prefix", EnvS3Prefix); err != nil {
+		return nil, fmt.Errorf("failed to bind s3 prefix env var: %w", err)
+	}
+	if err := v.BindEnv("s3_endpoint", EnvS3Endpoint); err != nil {
+		return nil, fmt.Errorf("failed to bind s3 endpoint env var: %w", err)
+	}
 
 	// Set defaults from config package
 	v.SetDefault("db_host", DefaultDBHost)
@@ -76,13 +83,12 @@ func FromCommand(cmd *cobra.Command) *Config {
 	// Unmarshal to config
 	result := &Config{}
 	if err := v.Unmarshal(result); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to unmarshal config: %v\n", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
 	// Set durations from duration flags
 	result.ConnectTimeout = v.GetDuration("connect_timeout")
 	result.QueryTimeout = v.GetDuration("query_timeout")
 
-	return result
+	return result, nil
 }

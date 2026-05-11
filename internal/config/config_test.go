@@ -22,6 +22,22 @@ func TestConfig_ConnectionString(t *testing.T) {
 	}
 }
 
+func TestConfig_ConnectionStringEscapesCredentials(t *testing.T) {
+	cfg := &Config{
+		DBUser:     "test@user",
+		DBPassword: "p@ss:word/with#chars",
+		DBHost:     "testhost",
+		DBPort:     1521,
+		DBService:  "ORCL",
+	}
+
+	want := "oracle://test%40user:p%40ss%3Aword%2Fwith%23chars@testhost:1521/ORCL"
+	got := cfg.ConnectionString()
+	if got != want {
+		t.Errorf("ConnectionString() = %q, want %q", got, want)
+	}
+}
+
 func TestConfig_EnsureDirs(t *testing.T) {
 	t.Run("creates export directory", func(t *testing.T) {
 		tmpDir := t.TempDir()

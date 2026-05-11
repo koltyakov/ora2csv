@@ -73,6 +73,18 @@ func TestNoSuchKeyError(t *testing.T) {
 	}
 }
 
+func TestIsNotFound(t *testing.T) {
+	if !isNotFound(&types.NoSuchKey{}) {
+		t.Error("NoSuchKey should be treated as not found")
+	}
+	if !isNotFound(&types.NotFound{}) {
+		t.Error("NotFound should be treated as not found")
+	}
+	if isNotFound(errors.New("boom")) {
+		t.Error("generic error should not be treated as not found")
+	}
+}
+
 // Test S3Config integration
 func TestS3ConfigWithStorage(t *testing.T) {
 	tests := []struct {

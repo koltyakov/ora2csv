@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/koltyakov/ora2csv/internal/config"
 )
 
@@ -57,6 +58,7 @@ func NewS3Client(cfg *config.S3Config) (*S3Client, error) {
 		// Create S3 client with custom endpoint
 		client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 			o.BaseEndpoint = aws.String(cfg.Endpoint)
+			o.UsePathStyle = true
 		})
 
 		// Configure multipart upload with fixed 5MB part size
@@ -130,8 +132,7 @@ func (s *S3Client) DownloadStream(ctx context.Context, key string) (io.ReadClose
 
 	output, err := s.client.GetObject(ctx, input)
 	if err != nil {
-		var nsk *types.NoSuchKey
-		if ok := errors.As(err, &nsk); ok {
+		if isNotFound(err) {
 			return nil, fmt.Errorf("key not found: %s", key)
 		}
 		return nil, fmt.Errorf("failed to download from S3 (key=%s): %w", key, err)
@@ -181,8 +182,7 @@ func (s *S3Client) Exists(ctx context.Context, key string) (bool, error) {
 
 	_, err := s.client.HeadObject(ctx, input)
 	if err != nil {
-		var nsk *types.NoSuchKey
-		if ok := errors.As(err, &nsk); ok {
+		if isNotFound(err) {
 			return false, nil
 		}
 		return false, fmt.Errorf("failed to check S3 object existence (key=%s): %w", key, err)
@@ -259,7 +259,7 @@ func (s *S3Client) DownloadBytes(ctx context.Context, key string) (data []byte, 
 // CheckConnection verifies S3 connectivity and PutObject permissions
 // It uploads a small test object and then deletes it
 func (s *S3Client) CheckConnection(ctx context.Context) error {
-	testKey := ".ora2csv-connectivity-test"
+	testKey := s.cfg.Key(".ora2csv-connectivity-test")
 
 	// Try to upload a small object (tests PutObject permission)
 	putInput := &s3.PutObjectInput{
@@ -286,4 +286,17 @@ func (s *S3Client) CheckConnection(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func isNotFound(err error) bool {
+	var nsk *types.NoSuchKey
+	if errors.As(err, &nsk) {
+		return true
+	}
+	var nf *types.NotFound
+	if errors.As(err, &nf) {
+		return true
+	}
+	var apiErr smithy.APIError
+	return errors.As(err, &apiErr) && (apiErr.ErrorCode() == "NoSuchKey" || apiErr.ErrorCode() == "NotFound")
 }

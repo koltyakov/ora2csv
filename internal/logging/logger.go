@@ -90,7 +90,10 @@ func (l *Logger) formatTimestamp() string {
 
 // log writes a log message with the given level
 func (l *Logger) log(level Level, format string, args ...interface{}) {
-	if level > l.level {
+	if level == LevelDebug && l.level != LevelDebug {
+		return
+	}
+	if level == LevelInfo && l.level == LevelError {
 		return
 	}
 

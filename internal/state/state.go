@@ -11,49 +11,61 @@ import (
 	"sync"
 	"time"
 
-	"github.com/koltyakov/ora2csv/internal/storage"
 	"github.com/koltyakov/ora2csv/pkg/types"
 )
+
+type remoteStore interface {
+	Exists(ctx context.Context, key string) (bool, error)
+	DownloadBytes(ctx context.Context, key string) ([]byte, error)
+	UploadBytes(ctx context.Context, key string, data []byte) error
+}
 
 // File manages the state.json file
 type File struct {
 	mu       sync.RWMutex
 	path     string
 	entities []types.EntityState
-	s3       *storage.S3Client
+	s3       remoteStore
 	s3Key    string // S3 key for state file
 }
 
 // Load reads and parses the state file
 // If s3 is provided, it will try to load from S3 first, falling back to local file
-func Load(path string, s3 *storage.S3Client, s3Key string) (*File, error) {
+func Load(path string, s3 remoteStore, s3Key string) (*File, error) {
 	var data []byte
 	var err error
 
 	// Try S3 first if available
+	s3StateMissing := false
 	if s3 != nil && s3Key != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
 		// Check if state exists in S3
 		exists, err := s3.Exists(ctx, s3Key)
-		if err == nil && exists {
+		if err != nil {
+			return nil, fmt.Errorf("failed to check S3 state file %s: %w", s3Key, err)
+		}
+		if exists {
 			// Download from S3
 			data, err = s3.DownloadBytes(ctx, s3Key)
-			if err == nil {
-				// Successfully downloaded from S3, save local copy
-				_ = os.WriteFile(path, data, 0644)
-				return parseState(data, path, s3, s3Key)
+			if err != nil {
+				return nil, fmt.Errorf("failed to download S3 state file %s: %w", s3Key, err)
 			}
-			// On error, fall through to local file
+			// Successfully downloaded from S3, save local copy
+			if err := os.WriteFile(path, data, 0644); err != nil {
+				return nil, fmt.Errorf("failed to write local state file %s: %w", path, err)
+			}
+			return parseState(data, path, s3, s3Key)
 		}
+		s3StateMissing = true
 	}
 
 	// Fall back to local file
 	data, err = os.ReadFile(path)
 	if err != nil {
-		// If local doesn't exist and S3 is enabled, return empty state
-		if s3 != nil && os.IsNotExist(err) {
+		// If neither local nor S3 state exists, start with an empty state.
+		if s3 != nil && s3StateMissing && os.IsNotExist(err) {
 			return &File{
 				path:     path,
 				entities: []types.EntityState{},
@@ -68,7 +80,7 @@ func Load(path string, s3 *storage.S3Client, s3Key string) (*File, error) {
 }
 
 // parseState parses state data and returns a File
-func parseState(data []byte, path string, s3 *storage.S3Client, s3Key string) (*File, error) {
+func parseState(data []byte, path string, s3 remoteStore, s3Key string) (*File, error) {
 	var entities []types.EntityState
 	if err := json.Unmarshal(data, &entities); err != nil {
 		return nil, fmt.Errorf("failed to parse state file: %w", err)

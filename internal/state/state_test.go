@@ -1,10 +1,35 @@
 package state
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+type fakeRemoteStore struct {
+	exists      bool
+	existsErr   error
+	data        []byte
+	downloadErr error
+	uploadErr   error
+	uploaded    []byte
+}
+
+func (f *fakeRemoteStore) Exists(ctx context.Context, key string) (bool, error) {
+	return f.exists, f.existsErr
+}
+
+func (f *fakeRemoteStore) DownloadBytes(ctx context.Context, key string) ([]byte, error) {
+	return f.data, f.downloadErr
+}
+
+func (f *fakeRemoteStore) UploadBytes(ctx context.Context, key string, data []byte) error {
+	f.uploaded = append([]byte(nil), data...)
+	return f.uploadErr
+}
 
 func mustWriteFile(t *testing.T, path, content string) {
 	t.Helper()
@@ -59,6 +84,69 @@ func TestLoad(t *testing.T) {
 		_, err := Load(statePath, nil, "")
 		if err == nil {
 			t.Error("expected error for invalid JSON, got nil")
+		}
+	})
+
+	t.Run("S3 exists error returns error", func(t *testing.T) {
+		remote := &fakeRemoteStore{existsErr: errors.New("access denied")}
+
+		_, err := Load("/nonexistent/state.json", remote, "state.json")
+		if err == nil {
+			t.Fatal("expected error for S3 exists failure, got nil")
+		}
+		if !strings.Contains(err.Error(), "failed to check S3 state file") {
+			t.Fatalf("error = %q, want S3 state check context", err.Error())
+		}
+	})
+
+	t.Run("S3 download error returns error", func(t *testing.T) {
+		remote := &fakeRemoteStore{
+			exists:      true,
+			downloadErr: errors.New("download failed"),
+		}
+
+		_, err := Load("/nonexistent/state.json", remote, "state.json")
+		if err == nil {
+			t.Fatal("expected error for S3 download failure, got nil")
+		}
+		if !strings.Contains(err.Error(), "failed to download S3 state file") {
+			t.Fatalf("error = %q, want S3 download context", err.Error())
+		}
+	})
+
+	t.Run("S3 missing and local missing starts empty", func(t *testing.T) {
+		remote := &fakeRemoteStore{exists: false}
+
+		st, err := Load("/nonexistent/state.json", remote, "state.json")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if st.TotalCount() != 0 {
+			t.Fatalf("got %d entities, want 0", st.TotalCount())
+		}
+	})
+
+	t.Run("S3 state downloads and writes local copy", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		statePath := filepath.Join(tmpDir, "state.json")
+		remote := &fakeRemoteStore{
+			exists: true,
+			data:   []byte(`[{"entity":"test.entity1","lastRunTime":"","active":true}]`),
+		}
+
+		st, err := Load(statePath, remote, "state.json")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if st.TotalCount() != 1 {
+			t.Fatalf("got %d entities, want 1", st.TotalCount())
+		}
+		data, err := os.ReadFile(statePath)
+		if err != nil {
+			t.Fatalf("ReadFile() error: %v", err)
+		}
+		if string(data) != string(remote.data) {
+			t.Fatalf("local state = %q, want %q", string(data), string(remote.data))
 		}
 	})
 }

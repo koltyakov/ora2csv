@@ -1,9 +1,22 @@
 package logging
 
 import (
+	"bytes"
+	"log"
 	"strings"
+	"sync"
 	"testing"
 )
+
+func newBufferLogger(level Level) (*Logger, *bytes.Buffer) {
+	buf := &bytes.Buffer{}
+	return &Logger{
+		mu:     &sync.Mutex{},
+		writer: buf,
+		level:  level,
+		std:    log.New(buf, "", 0),
+	}, buf
+}
 
 func TestNew(t *testing.T) {
 	t.Run("logger with verbose=false", func(t *testing.T) {
@@ -139,6 +152,40 @@ func TestLogger_LogLevels(t *testing.T) {
 		// Debug should be silently ignored at LevelInfo
 		logger.Debug("debug message")
 	})
+}
+
+func TestLogger_ErrorVisibleAtInfoLevel(t *testing.T) {
+	logger, buf := newBufferLogger(LevelInfo)
+
+	logger.Error("important error")
+
+	if !strings.Contains(buf.String(), "important error") {
+		t.Fatalf("Error() at LevelInfo was not logged: %q", buf.String())
+	}
+}
+
+func TestLogger_DebugHiddenAtInfoLevel(t *testing.T) {
+	logger, buf := newBufferLogger(LevelInfo)
+
+	logger.Debug("hidden debug")
+
+	if strings.Contains(buf.String(), "hidden debug") {
+		t.Fatalf("Debug() at LevelInfo was logged: %q", buf.String())
+	}
+}
+
+func TestLogger_InfoHiddenAtErrorLevel(t *testing.T) {
+	logger, buf := newBufferLogger(LevelError)
+
+	logger.Info("hidden info")
+	logger.Error("visible error")
+
+	if strings.Contains(buf.String(), "hidden info") {
+		t.Fatalf("Info() at LevelError was logged: %q", buf.String())
+	}
+	if !strings.Contains(buf.String(), "visible error") {
+		t.Fatalf("Error() at LevelError was not logged: %q", buf.String())
+	}
 }
 
 func TestLogger_DebugLevel(t *testing.T) {

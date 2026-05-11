@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -33,6 +34,8 @@ var rootCmd = &cobra.Command{
 It streams data directly from Oracle to CSV without storing entire exports in memory.`,
 	Version: version,
 }
+
+var errExportFailures = errors.New("one or more entities failed")
 
 var exportCmd = &cobra.Command{
 	Use:           "export",
@@ -83,6 +86,9 @@ func main() {
 	rootCmd.AddCommand(validateCmd)
 
 	if err := rootCmd.Execute(); err != nil {
+		if errors.Is(err, errExportFailures) {
+			os.Exit(2)
+		}
 		os.Exit(1)
 	}
 }
@@ -125,7 +131,11 @@ func printSummary(result *types.ExportResult, cfg *config.Config, logger *loggin
 	seconds := int(duration.Seconds()) % 60
 
 	logger.Info("==================================================")
-	logger.Info("Export completed successfully")
+	if result.FailedCount > 0 {
+		logger.Error("Export completed with failures")
+	} else {
+		logger.Info("Export completed successfully")
+	}
 	logger.Info("Total duration: %dm %ds", minutes, seconds)
 	logger.Info("Total entities: %d", result.TotalEntities)
 	logger.Info("Successfully processed: %d", result.SuccessCount)
@@ -256,7 +266,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 	// Exit with appropriate code
 	if result.FailedCount > 0 {
 		logger.Info("Export completed with %d failures", result.FailedCount)
-		os.Exit(2)
+		return errExportFailures
 	}
 
 	return nil

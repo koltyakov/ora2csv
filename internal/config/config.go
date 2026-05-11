@@ -2,7 +2,10 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -36,7 +39,13 @@ type Config struct {
 // ConnectionString returns the Oracle connection string for go-ora v2
 // Format: oracle://user:password@host:port/service
 func (c *Config) ConnectionString() string {
-	return fmt.Sprintf("oracle://%s:%s@%s:%d/%s", c.DBUser, c.DBPassword, c.DBHost, c.DBPort, c.DBService)
+	u := &url.URL{
+		Scheme: "oracle",
+		User:   url.UserPassword(c.DBUser, c.DBPassword),
+		Host:   net.JoinHostPort(c.DBHost, strconv.Itoa(c.DBPort)),
+		Path:   "/" + c.DBService,
+	}
+	return u.String()
 }
 
 // EnsureDirs creates necessary directories if they don't exist

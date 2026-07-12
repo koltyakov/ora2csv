@@ -247,6 +247,8 @@ SQL files should:
 - `1` - Configuration/initialization error
 - `2` - One or more entities failed (but others succeeded)
 
+On interruption, ora2csv cancels remote state operations, leaves state unadvanced for cancelled work, prints the partial result summary, and exits with code 1.
+
 ### Example Output
 
 ```

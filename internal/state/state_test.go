@@ -40,6 +40,9 @@ func (f *fakeRemoteStore) UploadBytes(ctx context.Context, key string, data []by
 }
 
 func (f *fakeRemoteStore) DownloadBytesVersion(ctx context.Context, key string) ([]byte, *string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	if f.existsErr != nil {
 		return nil, nil, f.existsErr
 	}
@@ -58,6 +61,9 @@ func (f *fakeRemoteStore) DownloadBytesVersion(ctx context.Context, key string) 
 }
 
 func (f *fakeRemoteStore) UploadBytesCAS(ctx context.Context, key string, data []byte, expectedETag *string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	var expectedCopy *string
 	if expectedETag != nil {
 		value := *expectedETag
@@ -259,6 +265,15 @@ func TestLoad_InvalidRemoteDoesNotReplaceLocal(t *testing.T) {
 	}
 	if string(data) != localState {
 		t.Fatalf("local state was replaced: got %q, want %q", data, localState)
+	}
+}
+
+func TestLoadContext_PropagatesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	remote := &fakeRemoteStore{exists: true, data: []byte(`[]`)}
+	if _, err := LoadContext(ctx, filepath.Join(t.TempDir(), "state.json"), remote, "state.json"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("LoadContext() error = %v, want context.Canceled", err)
 	}
 }
 
@@ -594,6 +609,26 @@ func TestAdvanceEntityTimestamp_CASConflictPreservesState(t *testing.T) {
 	}
 	if len(remote.expectedETags) != 1 || remote.expectedETags[0] != nil {
 		t.Fatalf("create CAS expected ETag = %v, want nil", remote.expectedETags)
+	}
+}
+
+func TestAdvanceEntityTimestampContext_PropagatesCancellation(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+	mustWriteFile(t, statePath, `[{"entity":"test.entity","lastRunTime":"2025-01-01T00:00:00","active":true}]`)
+	remote := &fakeRemoteStore{}
+	st, err := Load(statePath, remote, "state.json")
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	advanced, err := st.AdvanceEntityTimestampContext(ctx, "test.entity", time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC))
+	if advanced || !errors.Is(err, context.Canceled) {
+		t.Fatalf("AdvanceEntityTimestampContext() = (%t, %v)", advanced, err)
+	}
+	if len(remote.expectedETags) != 0 {
+		t.Fatal("cancelled update contacted remote storage")
 	}
 }
 

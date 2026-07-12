@@ -31,14 +31,19 @@ type Logger struct {
 
 // New creates a new Logger
 func New(verbose bool) *Logger {
+	return NewWithWriters(os.Stdout, os.Stderr, verbose)
+}
+
+// NewWithWriters creates a logger with explicit output streams.
+func NewWithWriters(stdout, stderr io.Writer, verbose bool) *Logger {
 	level := LevelInfo
 	if verbose {
 		level = LevelDebug
 	}
 	return &Logger{
 		mu:     &sync.Mutex{},
-		stdout: os.Stdout,
-		stderr: os.Stderr,
+		stdout: stdout,
+		stderr: stderr,
 		level:  level,
 		now:    time.Now,
 	}

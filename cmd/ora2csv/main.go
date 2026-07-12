@@ -142,13 +142,18 @@ func executeExport(ctx context.Context, cfg *config.Config, database *db.OracleD
 }
 
 // printSummary prints the export result summary
-func printSummary(result *types.ExportResult, cfg *config.Config, logger *logging.Logger) {
+func printSummary(result *types.ExportResult, cfg *config.Config, logger *logging.Logger, runErr error) {
 	duration := result.Duration
 	minutes := int(duration.Minutes())
 	seconds := int(duration.Seconds()) % 60
 
 	logger.Info("==================================================")
-	if result.FailedCount > 0 {
+	interrupted := errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded)
+	if interrupted {
+		logger.Error("Export interrupted")
+	} else if runErr != nil {
+		logger.Error("Export stopped with an error")
+	} else if result.FailedCount > 0 {
 		logger.Error("Export completed with failures")
 	} else {
 		logger.Info("Export completed successfully")
@@ -159,7 +164,11 @@ func printSummary(result *types.ExportResult, cfg *config.Config, logger *loggin
 	if result.FailedCount > 0 {
 		logger.Error("Failed entities: %d", result.FailedCount)
 	}
-	logger.Info("Skipped (inactive): %d", result.TotalEntities-result.ProcessedCount)
+	if runErr != nil {
+		logger.Info("Not processed: %d", result.SkippedCount)
+	} else {
+		logger.Info("Skipped (inactive): %d", result.SkippedCount)
+	}
 	logger.Info("==================================================")
 
 	// Print per-entity results if verbose
@@ -254,7 +263,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 	}
 
 	// Load state file (with S3 sync if enabled)
-	st, err := state.Load(cfg.StateFile, s3Client, s3StateKey)
+	st, err := state.LoadContext(ctx, cfg.StateFile, s3Client, s3StateKey)
 	if err != nil {
 		logger.Error("Failed to load state file: %v", err)
 		return fmt.Errorf("failed to load state file: %w", err)
@@ -293,13 +302,12 @@ func runExport(cmd *cobra.Command, args []string) error {
 
 	// Execute export
 	result, err := executeExport(ctx, cfg, database, st, logger, s3Client)
+	if result != nil {
+		printSummary(result, cfg, logger, err)
+	}
 	if err != nil {
-		logger.Error("Export failed: %v", err)
 		return err
 	}
-
-	// Print summary
-	printSummary(result, cfg, logger)
 
 	// Exit with appropriate code
 	if result.FailedCount > 0 {

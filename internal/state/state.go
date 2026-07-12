@@ -35,16 +35,21 @@ type File struct {
 // Load reads and parses the state file
 // If s3 is provided, it will try to load from S3 first, falling back to local file
 func Load(path string, s3 remoteStore, s3Key string) (*File, error) {
+	return LoadContext(context.Background(), path, s3, s3Key)
+}
+
+// LoadContext reads state while allowing remote operations to be cancelled.
+func LoadContext(ctx context.Context, path string, s3 remoteStore, s3Key string) (*File, error) {
 	var data []byte
 	var err error
 
 	// Try S3 first if available
 	s3StateMissing := false
 	if s3 != nil && s3Key != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		remoteCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 
-		data, etag, err := s3.DownloadBytesVersion(ctx, s3Key)
+		data, etag, err := s3.DownloadBytesVersion(remoteCtx, s3Key)
 		if err != nil {
 			return nil, fmt.Errorf("failed to download S3 state file %s: %w", s3Key, err)
 		}
@@ -202,18 +207,31 @@ func (f *File) FindEntity(name string) (*types.EntityState, bool) {
 
 // UpdateEntityTimestamp updates the lastRunTime for an entity
 func (f *File) UpdateEntityTimestamp(entityName string, timestamp string) error {
+	return f.UpdateEntityTimestampContext(context.Background(), entityName, timestamp)
+}
+
+// UpdateEntityTimestampContext advances a timestamp with cancellation support.
+func (f *File) UpdateEntityTimestampContext(ctx context.Context, entityName string, timestamp string) error {
 	parsed, err := time.ParseInLocation("2006-01-02T15:04:05", timestamp, time.UTC)
 	if err != nil {
 		return fmt.Errorf("invalid timestamp for entity %s: %w", entityName, err)
 	}
-	_, err = f.AdvanceEntityTimestamp(entityName, parsed)
+	_, err = f.AdvanceEntityTimestampContext(ctx, entityName, parsed)
 	return err
 }
 
 // AdvanceEntityTimestamp persists a timestamp only when it moves state forward.
 func (f *File) AdvanceEntityTimestamp(entityName string, timestamp time.Time) (bool, error) {
+	return f.AdvanceEntityTimestampContext(context.Background(), entityName, timestamp)
+}
+
+// AdvanceEntityTimestampContext persists a forward timestamp with cancellation support.
+func (f *File) AdvanceEntityTimestampContext(ctx context.Context, entityName string, timestamp time.Time) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	if timestamp.IsZero() {
 		return false, fmt.Errorf("timestamp for entity %s must not be zero", entityName)
 	}
@@ -242,7 +260,7 @@ func (f *File) AdvanceEntityTimestamp(entityName string, timestamp time.Time) (b
 		return false, fmt.Errorf("entity not found: %s", entityName)
 	}
 
-	newETag, remoteCommitted, err := f.save(candidate)
+	newETag, remoteCommitted, err := f.save(ctx, candidate)
 	if err == nil || remoteCommitted {
 		f.entities = candidate
 		if f.s3 != nil {
@@ -256,7 +274,7 @@ func (f *File) AdvanceEntityTimestamp(entityName string, timestamp time.Time) (b
 }
 
 // save writes the state to disk atomically and uploads to S3 if configured
-func (f *File) save(entities []types.EntityState) (newETag *string, remoteCommitted bool, retErr error) {
+func (f *File) save(ctx context.Context, entities []types.EntityState) (newETag *string, remoteCommitted bool, retErr error) {
 	// Sort entities by name for consistent output
 	sorted := make([]types.EntityState, len(entities))
 	copy(sorted, entities)
@@ -270,7 +288,7 @@ func (f *File) save(entities []types.EntityState) (newETag *string, remoteCommit
 	}
 
 	if f.s3 != nil && f.s3Key != "" {
-		etag, err := f.s3.UploadBytesCAS(context.Background(), f.s3Key, data, f.s3ETag)
+		etag, err := f.s3.UploadBytesCAS(ctx, f.s3Key, data, f.s3ETag)
 		if err != nil {
 			return nil, false, fmt.Errorf("failed to upload state to S3 (key=%s): %w", f.s3Key, err)
 		}

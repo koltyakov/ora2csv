@@ -137,6 +137,25 @@ func TestExporterRun_NoForwardWindowSkipsQuery(t *testing.T) {
 	}
 }
 
+func TestExporterRun_CancellationReturnsPartialResult(t *testing.T) {
+	rows := db.NewMockRowScanner([]string{"id"}, [][]string{{"1"}})
+	exp, _, _ := newTestExporter(t, rows)
+	database := exp.db.(*db.MockDB)
+	ctx, cancel := context.WithCancel(context.Background())
+	database.QueryFunc = func(queryCtx context.Context, query string, args map[string]interface{}) (db.RowScanner, error) {
+		cancel()
+		return rows, nil
+	}
+
+	result, err := exp.Run(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context.Canceled", err)
+	}
+	if result == nil || result.ProcessedCount != 1 || result.FailedCount != 1 {
+		t.Fatalf("partial result = %+v", result)
+	}
+}
+
 func TestExporterRun_CommitsOutputAndState(t *testing.T) {
 	rows := db.NewMockRowScanner([]string{"id", "name"}, [][]string{{"1", "Alice"}})
 	exp, statePath, exportDir := newTestExporter(t, rows)

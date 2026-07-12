@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +10,11 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/koltyakov/ora2csv/internal/config"
+	"github.com/koltyakov/ora2csv/internal/logging"
+	"github.com/koltyakov/ora2csv/pkg/types"
 )
 
 func TestRunExport_DryRunHasNoRemoteOrFilesystemSideEffects(t *testing.T) {
@@ -97,5 +103,24 @@ func TestRootCommandVersion(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestPrintSummary_InterruptedResult(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	logger := logging.NewWithWriters(&stdout, &stderr, false)
+	result := &types.ExportResult{
+		TotalEntities:  3,
+		ProcessedCount: 1,
+		FailedCount:    1,
+		SkippedCount:   2,
+		Duration:       time.Second,
+	}
+	printSummary(result, &config.Config{}, logger, context.Canceled)
+	if !strings.Contains(stderr.String(), "Export interrupted") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Not processed: 2") || strings.Contains(stdout.String(), "completed successfully") {
+		t.Fatalf("stdout = %q", stdout.String())
 	}
 }

@@ -82,7 +82,7 @@ func (e *Exporter) Run(ctx context.Context) (*types.ExportResult, error) {
 
 		// Update state only on success
 		if entityResult.Success {
-			if _, err := e.st.AdvanceEntityTimestamp(entity.Entity, tillDate); err != nil {
+			if _, err := e.st.AdvanceEntityTimestampContext(ctx, entity.Entity, tillDate); err != nil {
 				e.logger.Error("Failed to update state for %s: %v", entity.Entity, err)
 				entityResult.Success = false
 				entityResult.Error = fmt.Errorf("failed to update state for %s: %w", entity.Entity, err)
@@ -103,6 +103,12 @@ func (e *Exporter) Run(ctx context.Context) (*types.ExportResult, error) {
 			result.SkippedCount = result.TotalEntities - result.ProcessedCount
 			result.Duration = time.Since(startTime)
 			return result, entityResult.Error
+		}
+		if err := ctx.Err(); err != nil {
+			result.TotalEntities = e.st.TotalCount()
+			result.SkippedCount = result.TotalEntities - result.ProcessedCount
+			result.Duration = time.Since(startTime)
+			return result, fmt.Errorf("export interrupted: %w", err)
 		}
 	}
 

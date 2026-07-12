@@ -1,15 +1,15 @@
 # ora2csv
 
-Oracle to CSV exporter with state management and incremental sync support. A lightweight, cloud-friendly CLI tool written in Go that streams data directly from Oracle to CSV without storing entire exports in memory.
+Oracle to CSV exporter with state management and incremental sync support. A lightweight CLI written in Go that streams rows from Oracle to CSV without retaining entire exports in memory.
 
 ## Features
 
 - **Streaming Export**: Direct Oracle-to-CSV streaming - no full dataset in memory
 - **Incremental Sync**: State management tracks last run time per entity
-- **S3 Storage Support**: Stream directly to Amazon S3 or S3-compatible services
+- **S3 Storage Support**: Stage CSV files locally, then upload them to Amazon S3 or compatible services
 - **Pure Go Oracle Driver**: No Oracle client installation required (uses `go-ora/v2`)
 - **Single Binary**: Cloud-friendly deployment with no external dependencies
-- **RFC 4180 CSV**: Proper CSV escaping and formatting
+- **CSV Encoding**: Proper field escaping with UTF-8 and LF record endings
 - **Entity-based Processing**: Process multiple entities from a single state file
 - **Error Resilience**: Continue processing even if individual entities fail
 
@@ -152,7 +152,7 @@ For S3 configuration, examples, and S3-compatible service setup, see the [S3 Sto
 ]
 ```
 
-- **entity**: Name of the entity (must match `sql/<entity>.sql` filename)
+- **entity**: Unique single-component name matching `sql/<entity>.sql`; path separators are not allowed
 - **lastRunTime**: ISO 8601 timestamp of last successful export
 - **active**: Set to `false` to skip processing
 
@@ -171,6 +171,8 @@ Dry run (validate only):
 ```bash
 ora2csv export --dry-run
 ```
+
+Dry-run validation reads only local configuration, state, and SQL files. It does not contact Oracle or S3 and does not create output directories.
 
 ### validate
 
@@ -227,7 +229,7 @@ SQL files should:
 ### CSV Files
 
 - Location: `export/<entity>__<startDate>.csv`
-- Format: RFC 4180 compliant
+- Format: CSV escaping provided by Go's `encoding/csv`, with LF record endings
 - NULL values: Empty strings
 - Encoding: UTF-8
 
@@ -267,11 +269,18 @@ ora2csv is commonly used for periodic incremental data export to data warehouses
 - SQL file design for merge operations
 - Integration examples with dbt, Airflow, and other orchestration tools
 
+## Operational Limitations
+
+- Do not run multiple exporters against the same state file or S3 prefix concurrently. Distributed state locking is not yet implemented.
+- Timestamp watermarks require source SQL and downstream ingestion to account for transaction timing. For long-running source transactions, use an overlap window and deduplicate by primary key and version, or use Oracle CDC/SCN-based extraction.
+- Hard deletes are not represented by timestamp-filtered queries. Use tombstones, audit tables, CDC, or periodic reconciliation when deletes must be synchronized.
+- S3 mode requires local disk space for one completed entity CSV. The file is uploaded after it has been written successfully.
+
 ## Development
 
 ### Prerequisites
 
-- Go 1.21 or later
+- Go 1.25.5 or later
 
 ### E2E Testing
 
@@ -292,4 +301,4 @@ make lint         # Run linter
 
 ## License
 
-MIT License
+[MIT License](LICENSE)

@@ -5,7 +5,7 @@ End-to-end testing environment for ora2csv with a local Oracle database.
 ## Prerequisites
 
 - Docker and Docker Compose
-- Go 1.21+ (for building ora2csv)
+- Go 1.25.5+ (for building ora2csv)
 
 **No Oracle Instant Client or Atlas required** - Schema is automatically created on container startup, and all scripts use `docker exec`.
 

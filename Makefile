@@ -1,4 +1,4 @@
-.PHONY: build clean test install run validate docker-build
+.PHONY: default build build-all clean test test-coverage deps install run validate validate-full fmt lint help
 
 # Build variables
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -32,11 +32,11 @@ build:
 build-all:
 	@echo "Building for all platforms..."
 	@mkdir -p $(BUILD_DIR)
-	@$(foreach platform,$(PLATFORMS), \
+	@set -e; $(foreach platform,$(PLATFORMS), \
 		echo "Building $(platform)..."; \
 		GOOS=$(word 1,$(subst /, ,$(platform))) \
 		GOARCH=$(word 2,$(subst /, ,$(platform))) \
-		$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-$(platform)$(if $(findstring windows,$(platform)),.exe,) ./cmd/ora2csv; \
+		$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-$(subst /,-,$(platform))$(if $(findstring windows,$(platform)),.exe,) ./cmd/ora2csv; \
 	)
 	@echo "Build complete"
 
@@ -100,14 +100,8 @@ lint:
 		golangci-lint run ./...; \
 	else \
 		echo "golangci-lint not found. Install from https://golangci-lint.run/usage/install/"; \
+		exit 1; \
 	fi
-
-## docker-build: Build Docker image
-docker-build:
-	@echo "Building Docker image..."
-	docker build -t ora2csv:$(VERSION) .
-	docker tag ora2csv:$(VERSION) ora2csv:latest
-	@echo "Docker image built: ora2csv:$(VERSION)"
 
 ## help: Show this help message
 help:

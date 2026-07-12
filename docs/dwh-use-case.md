@@ -11,7 +11,7 @@ ora2csv is designed for **incremental data synchronization** from Oracle databas
 ```
 ┌─────────────────┐      ┌───────────────┐      ┌─────────────────┐
 │  Oracle ERP     │ ───> │    ora2csv    │ ───> │  Object Storage │
-│ (Source System) │      │ (Incremental) │      │  (S3/GCS/Azure) │
+│ (Source System) │      │ (Incremental) │      │   (S3/local)    │
 └─────────────────┘      └───────────────┘      └─────────────────┘
                                                          │
                                                          v
@@ -57,6 +57,8 @@ WHERE updated >= TO_DATE(:startDate, 'YYYY-MM-DD"T"HH24:MI:SS')
 ### 3. Streaming Design
 
 Direct Oracle-to-CSV streaming avoids memory spikes for large exports. The `--days-back` parameter controls initial export window.
+
+Timestamp extraction must account for transactions that commit after an export snapshot. Use an overlap window with downstream deduplication, or an Oracle SCN/CDC design, when missed late commits are unacceptable. Timestamp queries also do not represent hard deletes.
 
 ## Typical Workflow
 

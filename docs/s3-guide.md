@@ -1,10 +1,11 @@
 # S3 Storage Guide
 
-ora2csv supports streaming CSV exports directly to Amazon S3 or S3-compatible storage services (MinIO, Wasabi, etc.). When S3 is enabled, files are uploaded via multipart upload and the state file is synchronized with S3.
+ora2csv supports staged CSV uploads to Amazon S3 or S3-compatible storage services (MinIO, Wasabi, etc.). Rows stream from Oracle to a local temporary file; after the CSV is complete, it is atomically published locally and uploaded to S3. The state file is synchronized with S3.
 
 ## Features
 
-- **Multipart Upload**: Efficient streaming of large files (5MB part size)
+- **Multipart Upload**: Completed files are uploaded with 5MB parts when multipart upload applies
+- **Transactional Publication**: Incomplete CSV files are not exposed under their final names
 - **State Synchronization**: State file is fetched from and uploaded to S3
 - **S3-Compatible Services**: Support for MinIO, Wasabi, and other S3-like services
 - **Standard AWS Credentials**: Uses AWS SDK credential chain (supports `aws-vault`, AWS CLI profiles)
@@ -78,6 +79,10 @@ ora2csv export \
 | `AWS_REGION`            | AWS region (standard)        |
 | `AWS_PROFILE`           | AWS profile name (standard)  |
 
+### IAM Permissions
+
+The bucket preflight is read-only. Grant `s3:ListBucket` on the bucket and `s3:GetObject`, `s3:PutObject`, and `s3:AbortMultipartUpload` on the configured object prefix. `s3:DeleteObject` is not required by ora2csv.
+
 ## S3 File Layout
 
 Files are organized in S3 by entity name, with each entity in its own folder:
@@ -108,7 +113,9 @@ When S3 is enabled:
 
 2. **After each entity**: updates `state.json` locally and uploads to S3
 
-3. **On S3 upload failure**: local state is preserved, warning is logged
+3. **On state upload failure**: the entity is marked failed, later entities continue, and the remote state remains authoritative
+
+S3 mode requires enough local disk for one completed entity export. A successful upload removes the local CSV; a failed upload retains it as a fallback.
 
 ## Examples
 
@@ -183,13 +190,7 @@ ora2csv export --s3-bucket=my-export-bucket
 
 ### Running on AWS Lambda
 
-For scheduled, serverless exports, ora2csv can be deployed to AWS Lambda. See the [Lambda Deployment Guide](lambda.md) for complete instructions on:
-
-- Building and packaging the Lambda binary
-- IAM role requirements and VPC configuration
-- Scheduling with EventBridge
-- Monitoring with CloudWatch
-- Terraform deployment examples
+The current binary is a process-oriented CLI, not a Lambda custom runtime. See [Lambda Support Status](lambda.md) for supported alternatives and the work required for native Lambda support.
 
 ## S3-Compatible Services
 
@@ -227,7 +228,7 @@ ora2csv export \
 
 ### S3 Upload Failure
 
-If S3 upload fails, the entire export stops and an error is returned:
+If a CSV upload fails, that entity fails, its completed local CSV is retained, and later entities continue. The command exits with status 2 after processing the remaining entities:
 
 ```
 [2026-01-14 16:30:00] [entity] S3 upload failed: operation error S3: PutObject...
@@ -238,19 +239,19 @@ The local CSV file is preserved as a fallback. Fix the S3 credentials or connect
 
 ### State Upload Failure
 
-If state upload to S3 fails, the export stops and an error is returned:
+If state upload to S3 fails, that entity is marked failed and later entities continue:
 
 ```
 Error: failed to update state for entity1: failed to upload state to S3 (key=prefix/state.json): ...
 ```
 
-The local state file is preserved and will be used on the next run.
+The local copy is retained for diagnosis, but an existing S3 state object remains authoritative on the next run.
 
 ## Best Practices
 
 ### Security
 
-1. **Use IAM roles** when running on AWS infrastructure (EC2, Lambda, ECS)
+1. **Use IAM roles** when running on AWS infrastructure (EC2 or ECS)
 2. **Use aws-vault** for local development with MFA
 3. **Never commit credentials** to version control
 4. **Use bucket policies** instead of access keys when possible
@@ -260,6 +261,11 @@ The local state file is preserved and will be used on the next run.
 1. **Multipart upload** is automatic for files larger than 5MB
 2. **Concurrency** of 5 is used for multipart uploads
 3. **Network timeout** is set to 5 minutes per file upload
+4. **Local capacity** must accommodate one completed entity CSV
+
+### Concurrency
+
+Run only one exporter for a given state object and S3 prefix. Conditional state updates and distributed locking are not yet implemented.
 
 ### Organization
 

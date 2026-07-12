@@ -78,6 +78,7 @@ func (e *Exporter) Run(ctx context.Context) (*types.ExportResult, error) {
 		}
 
 		entityResult := e.processEntity(ctx, entity, tillDate)
+		stateConflict := false
 
 		// Update state only on success
 		if entityResult.Success {
@@ -85,6 +86,7 @@ func (e *Exporter) Run(ctx context.Context) (*types.ExportResult, error) {
 				e.logger.Error("Failed to update state for %s: %v", entity.Entity, err)
 				entityResult.Success = false
 				entityResult.Error = fmt.Errorf("failed to update state for %s: %w", entity.Entity, err)
+				stateConflict = errors.Is(err, storage.ErrCASConflict)
 			}
 		}
 
@@ -95,6 +97,12 @@ func (e *Exporter) Run(ctx context.Context) (*types.ExportResult, error) {
 			result.SuccessCount++
 		} else {
 			result.FailedCount++
+		}
+		if stateConflict {
+			result.TotalEntities = e.st.TotalCount()
+			result.SkippedCount = result.TotalEntities - result.ProcessedCount
+			result.Duration = time.Since(startTime)
+			return result, entityResult.Error
 		}
 	}
 

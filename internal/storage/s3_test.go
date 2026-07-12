@@ -77,6 +77,83 @@ func TestS3Client_CheckConnectionIsReadOnly(t *testing.T) {
 	}
 }
 
+func TestS3Client_StateVersioning(t *testing.T) {
+	t.Run("download returns ETag", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("ETag", `"etag-1"`)
+			_, _ = w.Write([]byte(`[]`))
+		}))
+		defer server.Close()
+		client, err := NewS3Client(&config.S3Config{Bucket: "test-bucket", Endpoint: server.URL, AccessKey: "key", SecretKey: "secret"})
+		if err != nil {
+			t.Fatalf("NewS3Client() error: %v", err)
+		}
+		data, etag, err := client.DownloadBytesVersion(context.Background(), "state.json")
+		if err != nil {
+			t.Fatalf("DownloadBytesVersion() error: %v", err)
+		}
+		if string(data) != `[]` || etag == nil || *etag != `"etag-1"` {
+			t.Fatalf("download = (%q, %v)", data, etag)
+		}
+	})
+
+	for _, tt := range []struct {
+		name         string
+		expectedETag *string
+		wantIfMatch  string
+		wantIfNone   string
+	}{
+		{name: "replace existing", expectedETag: stringPointer(`"etag-1"`), wantIfMatch: `"etag-1"`},
+		{name: "create missing", wantIfNone: "*"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got := r.Header.Get("If-Match"); got != tt.wantIfMatch {
+					t.Errorf("If-Match = %q, want %q", got, tt.wantIfMatch)
+				}
+				if got := r.Header.Get("If-None-Match"); got != tt.wantIfNone {
+					t.Errorf("If-None-Match = %q, want %q", got, tt.wantIfNone)
+				}
+				w.Header().Set("ETag", `"etag-2"`)
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
+			client, err := NewS3Client(&config.S3Config{Bucket: "test-bucket", Endpoint: server.URL, AccessKey: "key", SecretKey: "secret"})
+			if err != nil {
+				t.Fatalf("NewS3Client() error: %v", err)
+			}
+			etag, err := client.UploadBytesCAS(context.Background(), "state.json", []byte(`[]`), tt.expectedETag)
+			if err != nil {
+				t.Fatalf("UploadBytesCAS() error: %v", err)
+			}
+			if etag != `"etag-2"` {
+				t.Fatalf("ETag = %q", etag)
+			}
+		})
+	}
+
+	t.Run("precondition failure is a CAS conflict", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusPreconditionFailed)
+			_, _ = w.Write([]byte(`<Error><Code>PreconditionFailed</Code><Message>conflict</Message></Error>`))
+		}))
+		defer server.Close()
+		client, err := NewS3Client(&config.S3Config{Bucket: "test-bucket", Endpoint: server.URL, AccessKey: "key", SecretKey: "secret"})
+		if err != nil {
+			t.Fatalf("NewS3Client() error: %v", err)
+		}
+		_, err = client.UploadBytesCAS(context.Background(), "state.json", []byte(`[]`), stringPointer(`"stale"`))
+		if !errors.Is(err, ErrCASConflict) {
+			t.Fatalf("UploadBytesCAS() error = %v, want ErrCASConflict", err)
+		}
+	})
+}
+
+func stringPointer(value string) *string {
+	return &value
+}
+
 func TestS3Client_UploadFile(t *testing.T) {
 	// This method always returns an error directing to use UploadStream
 	client := &S3Client{

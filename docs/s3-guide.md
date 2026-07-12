@@ -265,7 +265,7 @@ The local copy is retained for diagnosis, but an existing S3 state object remain
 
 ### Concurrency
 
-Local exporters sharing the same state path are serialized with an advisory lock. Separate hosts or containers can still race against the same S3 state object; conditional state updates and distributed locking are not yet implemented.
+Local exporters sharing the same state path are serialized with an advisory lock. S3 state updates use ETag compare-and-swap, preventing a stale process from overwriting newer state. Separate hosts can still run duplicate exports before one receives a state conflict; distributed execution locking is not yet implemented.
 
 ### Organization
 

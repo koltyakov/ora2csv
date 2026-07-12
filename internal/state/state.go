@@ -18,9 +18,8 @@ import (
 )
 
 type remoteStore interface {
-	Exists(ctx context.Context, key string) (bool, error)
-	DownloadBytes(ctx context.Context, key string) ([]byte, error)
-	UploadBytes(ctx context.Context, key string, data []byte) error
+	DownloadBytesVersion(ctx context.Context, key string) ([]byte, *string, error)
+	UploadBytesCAS(ctx context.Context, key string, data []byte, expectedETag *string) (string, error)
 }
 
 // File manages the state.json file
@@ -30,6 +29,7 @@ type File struct {
 	entities []types.EntityState
 	s3       remoteStore
 	s3Key    string // S3 key for state file
+	s3ETag   *string
 }
 
 // Load reads and parses the state file
@@ -44,17 +44,11 @@ func Load(path string, s3 remoteStore, s3Key string) (*File, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		// Check if state exists in S3
-		exists, err := s3.Exists(ctx, s3Key)
+		data, etag, err := s3.DownloadBytesVersion(ctx, s3Key)
 		if err != nil {
-			return nil, fmt.Errorf("failed to check S3 state file %s: %w", s3Key, err)
+			return nil, fmt.Errorf("failed to download S3 state file %s: %w", s3Key, err)
 		}
-		if exists {
-			// Download from S3
-			data, err = s3.DownloadBytes(ctx, s3Key)
-			if err != nil {
-				return nil, fmt.Errorf("failed to download S3 state file %s: %w", s3Key, err)
-			}
+		if etag != nil {
 			// Validate remote state before replacing the local recovery copy.
 			parsed, err := parseState(data, path, s3, s3Key)
 			if err != nil {
@@ -63,6 +57,7 @@ func Load(path string, s3 remoteStore, s3Key string) (*File, error) {
 			if err := replaceFileAtomic(path, data); err != nil {
 				return nil, fmt.Errorf("failed to write local state file %s: %w", path, err)
 			}
+			parsed.s3ETag = etag
 			return parsed, nil
 		}
 		s3StateMissing = true
@@ -247,15 +242,21 @@ func (f *File) AdvanceEntityTimestamp(entityName string, timestamp time.Time) (b
 		return false, fmt.Errorf("entity not found: %s", entityName)
 	}
 
-	if err := f.save(candidate); err != nil {
-		return false, err
+	newETag, remoteCommitted, err := f.save(candidate)
+	if err == nil || remoteCommitted {
+		f.entities = candidate
+		if f.s3 != nil {
+			f.s3ETag = newETag
+		}
 	}
-	f.entities = candidate
+	if err != nil {
+		return remoteCommitted, err
+	}
 	return true, nil
 }
 
 // save writes the state to disk atomically and uploads to S3 if configured
-func (f *File) save(entities []types.EntityState) error {
+func (f *File) save(entities []types.EntityState) (newETag *string, remoteCommitted bool, retErr error) {
 	// Sort entities by name for consistent output
 	sorted := make([]types.EntityState, len(entities))
 	copy(sorted, entities)
@@ -265,24 +266,26 @@ func (f *File) save(entities []types.EntityState) error {
 
 	data, err := json.MarshalIndent(sorted, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal state: %w", err)
+		return nil, false, fmt.Errorf("failed to marshal state: %w", err)
 	}
 
-	if err := replaceFileAtomic(f.path, data); err != nil {
-		return fmt.Errorf("failed to save state file: %w", err)
-	}
-
-	// Upload to S3 if configured
 	if f.s3 != nil && f.s3Key != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		if err := f.s3.UploadBytes(ctx, f.s3Key, data); err != nil {
-			return fmt.Errorf("failed to upload state to S3 (key=%s): %w", f.s3Key, err)
+		etag, err := f.s3.UploadBytesCAS(ctx, f.s3Key, data, f.s3ETag)
+		if err != nil {
+			return nil, false, fmt.Errorf("failed to upload state to S3 (key=%s): %w", f.s3Key, err)
 		}
+		newETag = &etag
+		remoteCommitted = true
 	}
 
-	return nil
+	if err := replaceFileAtomic(f.path, data); err != nil {
+		return newETag, remoteCommitted, fmt.Errorf("failed to save local state file: %w", err)
+	}
+
+	return newETag, remoteCommitted, nil
 }
 
 func replaceFileAtomic(path string, data []byte) (retErr error) {

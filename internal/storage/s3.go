@@ -16,8 +16,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/koltyakov/ora2csv/internal/config"
 )
+
+var ErrCASConflict = errors.New("S3 compare-and-swap conflict")
 
 // S3Client wraps AWS S3 operations for ora2csv
 type S3Client struct {
@@ -237,23 +240,64 @@ func (s *S3Client) UploadBytes(ctx context.Context, key string, data []byte) err
 	return s.UploadStream(ctx, key, bytes.NewReader(data))
 }
 
+// UploadBytesCAS conditionally replaces a small object and returns its new ETag.
+func (s *S3Client) UploadBytesCAS(ctx context.Context, key string, data []byte, expectedETag *string) (string, error) {
+	input := &s3.PutObjectInput{
+		Bucket: aws.String(s.cfg.Bucket),
+		Key:    aws.String(key),
+		Body:   bytes.NewReader(data),
+	}
+	if expectedETag == nil {
+		input.IfNoneMatch = aws.String("*")
+	} else {
+		input.IfMatch = expectedETag
+	}
+	output, err := s.client.PutObject(ctx, input)
+	if err != nil {
+		if isCASConflict(err) {
+			return "", fmt.Errorf("%w for key %s: %v", ErrCASConflict, key, err)
+		}
+		return "", fmt.Errorf("failed to conditionally upload to S3 (key=%s): %w", key, err)
+	}
+	if output.ETag == nil || *output.ETag == "" {
+		return "", fmt.Errorf("conditional S3 upload returned no ETag for key %s", key)
+	}
+	return *output.ETag, nil
+}
+
 // DownloadBytes downloads an object from S3 as a byte slice
 func (s *S3Client) DownloadBytes(ctx context.Context, key string) (data []byte, retErr error) {
-	reader, err := s.DownloadStream(ctx, key)
+	data, _, err := s.DownloadBytesVersion(ctx, key)
+	return data, err
+}
+
+// DownloadBytesVersion downloads a small object and returns its opaque ETag.
+// A missing object returns nil data, nil ETag, and no error.
+func (s *S3Client) DownloadBytesVersion(ctx context.Context, key string) (data []byte, etag *string, retErr error) {
+	output, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.cfg.Bucket),
+		Key:    aws.String(key),
+	})
 	if err != nil {
-		return nil, err
+		if isNotFound(err) {
+			return nil, nil, nil
+		}
+		return nil, nil, fmt.Errorf("failed to download from S3 (key=%s): %w", key, err)
 	}
 	defer func() {
-		if err := reader.Close(); err != nil {
+		if err := output.Body.Close(); err != nil {
 			retErr = errors.Join(retErr, fmt.Errorf("failed to close S3 download stream: %w", err))
 		}
 	}()
 
-	data, err = io.ReadAll(reader)
+	data, err = io.ReadAll(output.Body)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return data, nil
+	if output.ETag == nil || *output.ETag == "" {
+		return nil, nil, fmt.Errorf("S3 download returned no ETag for key %s", key)
+	}
+	return data, output.ETag, nil
 }
 
 // CheckConnection verifies that the configured bucket is reachable.
@@ -278,4 +322,16 @@ func isNotFound(err error) bool {
 	}
 	var apiErr smithy.APIError
 	return errors.As(err, &apiErr) && (apiErr.ErrorCode() == "NoSuchKey" || apiErr.ErrorCode() == "NotFound")
+}
+
+func isCASConflict(err error) bool {
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		code := apiErr.ErrorCode()
+		if code == "PreconditionFailed" || code == "ConditionalRequestConflict" {
+			return true
+		}
+	}
+	var responseErr *smithyhttp.ResponseError
+	return errors.As(err, &responseErr) && (responseErr.HTTPStatusCode() == 409 || responseErr.HTTPStatusCode() == 412)
 }

@@ -10,15 +10,20 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/koltyakov/ora2csv/internal/storage"
 )
 
 type fakeRemoteStore struct {
-	exists      bool
-	existsErr   error
-	data        []byte
-	downloadErr error
-	uploadErr   error
-	uploaded    []byte
+	exists        bool
+	existsErr     error
+	data          []byte
+	downloadErr   error
+	uploadErr     error
+	uploaded      []byte
+	etag          *string
+	nextETag      string
+	expectedETags []*string
 }
 
 func (f *fakeRemoteStore) Exists(ctx context.Context, key string) (bool, error) {
@@ -32,6 +37,41 @@ func (f *fakeRemoteStore) DownloadBytes(ctx context.Context, key string) ([]byte
 func (f *fakeRemoteStore) UploadBytes(ctx context.Context, key string, data []byte) error {
 	f.uploaded = append([]byte(nil), data...)
 	return f.uploadErr
+}
+
+func (f *fakeRemoteStore) DownloadBytesVersion(ctx context.Context, key string) ([]byte, *string, error) {
+	if f.existsErr != nil {
+		return nil, nil, f.existsErr
+	}
+	if f.downloadErr != nil {
+		return nil, nil, f.downloadErr
+	}
+	if !f.exists {
+		return nil, nil, nil
+	}
+	etag := f.etag
+	if etag == nil {
+		value := `"etag-1"`
+		etag = &value
+	}
+	return f.data, etag, nil
+}
+
+func (f *fakeRemoteStore) UploadBytesCAS(ctx context.Context, key string, data []byte, expectedETag *string) (string, error) {
+	var expectedCopy *string
+	if expectedETag != nil {
+		value := *expectedETag
+		expectedCopy = &value
+	}
+	f.expectedETags = append(f.expectedETags, expectedCopy)
+	f.uploaded = append([]byte(nil), data...)
+	if f.uploadErr != nil {
+		return "", f.uploadErr
+	}
+	if f.nextETag == "" {
+		f.nextETag = `"etag-next"`
+	}
+	return f.nextETag, nil
 }
 
 func mustWriteFile(t *testing.T, path, content string) {
@@ -97,8 +137,8 @@ func TestLoad(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for S3 exists failure, got nil")
 		}
-		if !strings.Contains(err.Error(), "failed to check S3 state file") {
-			t.Fatalf("error = %q, want S3 state check context", err.Error())
+		if !strings.Contains(err.Error(), "failed to download S3 state file") {
+			t.Fatalf("error = %q, want S3 state context", err.Error())
 		}
 	})
 
@@ -496,6 +536,64 @@ func TestAdvanceEntityTimestamp_ConcurrentUpdatesKeepMaximum(t *testing.T) {
 	entity, _ := st.FindEntity("test.entity")
 	if entity.LastRunTime != "2025-01-03T00:00:00" {
 		t.Fatalf("lastRunTime = %q, want maximum candidate", entity.LastRunTime)
+	}
+}
+
+func TestAdvanceEntityTimestamp_UsesRemoteETagCAS(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+	initialETag := `"etag-1"`
+	remote := &fakeRemoteStore{
+		exists:   true,
+		data:     []byte(`[{"entity":"test.entity","lastRunTime":"2025-01-01T00:00:00","active":true}]`),
+		etag:     &initialETag,
+		nextETag: `"etag-2"`,
+	}
+	st, err := Load(statePath, remote, "state.json")
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	advanced, err := st.AdvanceEntityTimestamp("test.entity", time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC))
+	if err != nil || !advanced {
+		t.Fatalf("first AdvanceEntityTimestamp() = (%t, %v)", advanced, err)
+	}
+	remote.nextETag = `"etag-3"`
+	advanced, err = st.AdvanceEntityTimestamp("test.entity", time.Date(2025, 1, 3, 0, 0, 0, 0, time.UTC))
+	if err != nil || !advanced {
+		t.Fatalf("second AdvanceEntityTimestamp() = (%t, %v)", advanced, err)
+	}
+	if len(remote.expectedETags) != 2 || remote.expectedETags[0] == nil || *remote.expectedETags[0] != `"etag-1"` || remote.expectedETags[1] == nil || *remote.expectedETags[1] != `"etag-2"` {
+		t.Fatalf("expected ETags = %v", remote.expectedETags)
+	}
+}
+
+func TestAdvanceEntityTimestamp_CASConflictPreservesState(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+	initial := `[{"entity":"test.entity","lastRunTime":"2025-01-01T00:00:00","active":true}]`
+	mustWriteFile(t, statePath, initial)
+	remote := &fakeRemoteStore{uploadErr: storage.ErrCASConflict}
+	st, err := Load(statePath, remote, "state.json")
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	advanced, err := st.AdvanceEntityTimestamp("test.entity", time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC))
+	if advanced || !errors.Is(err, storage.ErrCASConflict) {
+		t.Fatalf("AdvanceEntityTimestamp() = (%t, %v), want CAS conflict", advanced, err)
+	}
+	entity, _ := st.FindEntity("test.entity")
+	if entity.LastRunTime != "2025-01-01T00:00:00" {
+		t.Fatalf("memory advanced to %q", entity.LastRunTime)
+	}
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error: %v", err)
+	}
+	if string(data) != initial {
+		t.Fatalf("local state changed to %q", data)
+	}
+	if len(remote.expectedETags) != 1 || remote.expectedETags[0] != nil {
+		t.Fatalf("create CAS expected ETag = %v, want nil", remote.expectedETags)
 	}
 }
 

@@ -13,6 +13,7 @@ const (
 	DefaultConnectTimeoutSecs = 30
 	DefaultQueryTimeoutSecs   = 300 // 5 minutes
 	DefaultWatermarkLagSecs   = 0
+	DefaultNullValue          = ""
 
 	// S3 defaults
 	DefaultS3PartSize = 5 * 1024 * 1024 // 5MB
@@ -31,4 +32,5 @@ const (
 	EnvS3Prefix     = "ORA2CSV_S3_PREFIX"
 	EnvS3Endpoint   = "ORA2CSV_S3_ENDPOINT"
 	EnvWatermarkLag = "ORA2CSV_WATERMARK_LAG"
+	EnvNullValue    = "ORA2CSV_NULL_VALUE"
 )

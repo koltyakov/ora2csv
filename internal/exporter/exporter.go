@@ -278,14 +278,14 @@ func (e *Exporter) executeQueryToCSV(ctx context.Context, entityName, sqlContent
 		log.Info("Streaming to S3: %s", s3Key)
 
 		// Create S3 streaming writer
-		w, err := NewS3StreamingCSVWriter(e.s3, s3Key, outputPath, len(columns))
+		w, err := NewS3StreamingCSVWriterWithNullValue(e.s3, s3Key, outputPath, len(columns), e.cfg.NullValue)
 		if err != nil {
 			return 0, fmt.Errorf("failed to create S3 CSV writer: %w", err)
 		}
 		writer = w
 	} else {
 		// Create local file writer
-		w, err := NewStreamingCSVWriter(outputPath, len(columns))
+		w, err := NewStreamingCSVWriterWithNullValue(outputPath, len(columns), e.cfg.NullValue)
 		if err != nil {
 			return 0, fmt.Errorf("failed to create CSV writer: %w", err)
 		}

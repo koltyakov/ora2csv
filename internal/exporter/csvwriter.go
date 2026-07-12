@@ -13,12 +13,13 @@ import (
 	"time"
 )
 
-// CSVWriter handles streaming CSV writing with RFC 4180 compliance
+// CSVWriter handles streaming CSV encoding.
 type CSVWriter struct {
-	writer   *csv.Writer
-	file     *os.File
-	headers  []string
-	rowCount int
+	writer    *csv.Writer
+	file      *os.File
+	headers   []string
+	rowCount  int
+	nullValue string
 }
 
 // NewCSVWriter creates a new CSVWriter for the given file path
@@ -28,17 +29,18 @@ func NewCSVWriter(filePath string) (*CSVWriter, error) {
 		return nil, fmt.Errorf("failed to create file: %w", err)
 	}
 
-	return newCSVWriter(file), nil
+	return newCSVWriter(file, ""), nil
 }
 
-func newCSVWriter(file *os.File) *CSVWriter {
+func newCSVWriter(file *os.File, nullValue string) *CSVWriter {
 	writer := csv.NewWriter(file)
 	// Use Unix line endings (LF)
 	writer.UseCRLF = false
 
 	return &CSVWriter{
-		writer: writer,
-		file:   file,
+		writer:    writer,
+		file:      file,
+		nullValue: nullValue,
 	}
 }
 
@@ -56,7 +58,7 @@ func (w *CSVWriter) WriteHeaders(columns []string) error {
 func (w *CSVWriter) WriteRow(values []interface{}) error {
 	strValues := make([]string, len(values))
 	for i, v := range values {
-		strValues[i] = formatValue(v)
+		strValues[i] = formatValueWithNull(v, w.nullValue)
 	}
 
 	if err := w.writer.Write(strValues); err != nil {
@@ -75,10 +77,14 @@ func (w *CSVWriter) WriteRow(values []interface{}) error {
 }
 
 // formatValue converts any value to string for CSV output
-// NULL values become empty strings
+// NULL values use the writer's configured marker.
 func formatValue(v interface{}) string {
+	return formatValueWithNull(v, "")
+}
+
+func formatValueWithNull(v interface{}, nullValue string) string {
 	if v == nil {
-		return ""
+		return nullValue
 	}
 
 	switch val := v.(type) {
@@ -175,13 +181,18 @@ const (
 
 // NewStreamingCSVWriter creates a writer optimized for streaming database rows
 func NewStreamingCSVWriter(filePath string, columnCount int) (*StreamingCSVWriter, error) {
+	return NewStreamingCSVWriterWithNullValue(filePath, columnCount, "")
+}
+
+// NewStreamingCSVWriterWithNullValue creates a transactional writer with an explicit NULL marker.
+func NewStreamingCSVWriterWithNullValue(filePath string, columnCount int, nullValue string) (*StreamingCSVWriter, error) {
 	file, err := os.CreateTemp(filepath.Dir(filePath), "."+filepath.Base(filePath)+".tmp-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temporary CSV file: %w", err)
 	}
 
 	return &StreamingCSVWriter{
-		csv:       newCSVWriter(file),
+		csv:       newCSVWriter(file, nullValue),
 		dest:      make([]interface{}, columnCount),
 		rowValues: make([]sql.NullString, columnCount),
 		finalPath: filePath,
@@ -376,7 +387,12 @@ type S3StreamingCSVWriter struct {
 // NewS3StreamingCSVWriter creates a writer that stages data locally for S3.
 // The completed data is published locally, then uploaded to S3 on Commit.
 func NewS3StreamingCSVWriter(uploader streamUploader, s3Key, localPath string, columnCount int) (*S3StreamingCSVWriter, error) {
-	writer, err := NewStreamingCSVWriter(localPath, columnCount)
+	return NewS3StreamingCSVWriterWithNullValue(uploader, s3Key, localPath, columnCount, "")
+}
+
+// NewS3StreamingCSVWriterWithNullValue creates an S3 writer with an explicit NULL marker.
+func NewS3StreamingCSVWriterWithNullValue(uploader streamUploader, s3Key, localPath string, columnCount int, nullValue string) (*S3StreamingCSVWriter, error) {
+	writer, err := NewStreamingCSVWriterWithNullValue(localPath, columnCount, nullValue)
 	if err != nil {
 		return nil, err
 	}

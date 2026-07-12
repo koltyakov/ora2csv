@@ -69,6 +69,7 @@ func init() {
 	rootCmd.PersistentFlags().Duration("connect-timeout", config.DefaultConnectTimeoutSecs*time.Second, "Connection timeout")
 	rootCmd.PersistentFlags().Duration("query-timeout", config.DefaultQueryTimeoutSecs*time.Second, "Query timeout")
 	rootCmd.PersistentFlags().Duration("watermark-lag", config.DefaultWatermarkLagSecs*time.Second, "Delay the Oracle watermark to allow recent transactions to commit")
+	rootCmd.PersistentFlags().String("null-value", config.DefaultNullValue, "CSV value used for SQL NULL")
 
 	// S3 flags
 	rootCmd.PersistentFlags().String("s3-bucket", "", "S3 bucket name")

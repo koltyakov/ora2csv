@@ -28,6 +28,7 @@ type Config struct {
 	DryRun          bool          `mapstructure:"dry_run"`
 	Verbose         bool          `mapstructure:"verbose"`
 	WatermarkLag    time.Duration `mapstructure:"-"`
+	NullValue       string        `mapstructure:"null_value"`
 
 	// Timeouts
 	ConnectTimeout time.Duration `mapstructure:"-"`

@@ -386,6 +386,43 @@ func TestStreamingCSVWriter_PreservesEmptyStringVsNull(t *testing.T) {
 	}
 }
 
+func TestStreamingCSVWriter_CustomNullValue(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := tmpDir + "/test.csv"
+	writer, err := NewStreamingCSVWriterWithNullValue(filePath, 2, `\N`)
+	if err != nil {
+		t.Fatalf("NewStreamingCSVWriterWithNullValue() error = %v", err)
+	}
+	defer mustAbortStreamingCSVWriter(t, writer)
+	if err := writer.WriteHeaders([]string{"kind", "value"}); err != nil {
+		t.Fatalf("WriteHeaders() error = %v", err)
+	}
+
+	targets := writer.GetScanTargets()
+	targets[0].(*sql.NullString).String, targets[0].(*sql.NullString).Valid = "empty", true
+	targets[1].(*sql.NullString).String, targets[1].(*sql.NullString).Valid = "", true
+	if err := writer.WriteScannedRow(); err != nil {
+		t.Fatalf("WriteScannedRow(empty) error = %v", err)
+	}
+	targets = writer.GetScanTargets()
+	targets[0].(*sql.NullString).String, targets[0].(*sql.NullString).Valid = "null", true
+	targets[1].(*sql.NullString).Valid = false
+	if err := writer.WriteScannedRow(); err != nil {
+		t.Fatalf("WriteScannedRow(NULL) error = %v", err)
+	}
+	if err := writer.Commit(context.Background()); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(data) != "kind,value\nempty,\nnull,\\N\n" {
+		t.Fatalf("CSV = %q", data)
+	}
+}
+
 func TestStreamingCSVWriter_FullWorkflow(t *testing.T) {
 	tmpDir := t.TempDir()
 	filePath := tmpDir + "/test.csv"
@@ -666,6 +703,29 @@ func TestS3StreamingCSVWriter(t *testing.T) {
 		}
 		if _, err := os.Stat(localPath); !os.IsNotExist(err) {
 			t.Fatal("final file exists after abort")
+		}
+	})
+
+	t.Run("custom null value reaches upload", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		localPath := tmpDir + "/test.csv"
+		uploader := &fakeStreamUploader{}
+		writer, err := NewS3StreamingCSVWriterWithNullValue(uploader, "exports/test.csv", localPath, 1, `\N`)
+		if err != nil {
+			t.Fatalf("NewS3StreamingCSVWriterWithNullValue() error = %v", err)
+		}
+		if err := writer.WriteHeaders([]string{"value"}); err != nil {
+			t.Fatalf("WriteHeaders() error = %v", err)
+		}
+		writer.GetScanTargets()[0].(*sql.NullString).Valid = false
+		if err := writer.WriteScannedRow(); err != nil {
+			t.Fatalf("WriteScannedRow() error = %v", err)
+		}
+		if err := writer.Commit(context.Background()); err != nil {
+			t.Fatalf("Commit() error = %v", err)
+		}
+		if string(uploader.data) != "value\n\\N\n" {
+			t.Fatalf("uploaded data = %q", uploader.data)
 		}
 	})
 

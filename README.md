@@ -90,6 +90,7 @@ Download the latest release from [Releases](https://github.com/koltyakov/ora2csv
 | `ORA2CSV_SQL_DIR`       | Path to SQL files     | `./sql`        |
 | `ORA2CSV_EXPORT_DIR`    | Path for output CSVs  | `./export`     |
 | `ORA2CSV_WATERMARK_LAG` | Delay applied to Oracle UTC watermark | `0s` |
+| `ORA2CSV_NULL_VALUE`    | CSV marker for SQL NULL | empty field |
 | `ORA2CSV_S3_BUCKET`     | S3 bucket name        | empty          |
 | `ORA2CSV_S3_PREFIX`     | S3 key prefix         | empty          |
 | `ORA2CSV_S3_ENDPOINT`   | S3 endpoint URL       | empty          |
@@ -116,6 +117,7 @@ Flags:
   --connect-timeout duration Connection timeout (default 30s)
   --query-timeout duration  Query timeout (default 5m)
   --watermark-lag duration Delay the Oracle watermark (default 0s)
+  --null-value string      CSV value used for SQL NULL (default empty)
   --s3-bucket string        S3 bucket name (enables S3 storage)
   --s3-prefix string        S3 key prefix
   --s3-endpoint string      S3 endpoint URL for S3-compatible services
@@ -232,7 +234,7 @@ SQL files should:
 
 - Location: `export/<entity>__<startDate>.csv`
 - Format: CSV escaping provided by Go's `encoding/csv`, with LF record endings
-- NULL values: Empty strings
+- NULL values: Empty fields by default; configurable with `--null-value` (for example, `\N`)
 - Encoding: UTF-8
 
 ### Exit Codes

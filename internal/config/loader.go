@@ -30,6 +30,7 @@ func FromCommand(cmd *cobra.Command) (*Config, error) {
 		{"connect-timeout", "connect_timeout"},
 		{"query-timeout", "query_timeout"},
 		{"watermark-lag", "watermark_lag"},
+		{"null-value", "null_value"},
 		// S3 flags (note: auth flags kept for non-AWS S3-compatible services)
 		{"s3-bucket", "s3_bucket"},
 		{"s3-prefix", "s3_prefix"},
@@ -54,6 +55,9 @@ func FromCommand(cmd *cobra.Command) (*Config, error) {
 	}
 	if err := v.BindEnv("watermark_lag", EnvWatermarkLag); err != nil {
 		return nil, fmt.Errorf("failed to bind watermark lag env var: %w", err)
+	}
+	if err := v.BindEnv("null_value", EnvNullValue); err != nil {
+		return nil, fmt.Errorf("failed to bind null value env var: %w", err)
 	}
 
 	// S3 environment variable bindings
@@ -81,6 +85,7 @@ func FromCommand(cmd *cobra.Command) (*Config, error) {
 	v.SetDefault("connect_timeout", DefaultConnectTimeoutSecs*time.Second)
 	v.SetDefault("query_timeout", DefaultQueryTimeoutSecs*time.Second)
 	v.SetDefault("watermark_lag", DefaultWatermarkLagSecs*time.Second)
+	v.SetDefault("null_value", DefaultNullValue)
 
 	// S3 defaults
 	// No defaults - using AWS SDK default region and credential chain

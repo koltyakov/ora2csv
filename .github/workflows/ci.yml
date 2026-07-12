@@ -28,3 +28,13 @@ jobs:
       - run: go vet ./...
       - run: go test -race -shuffle=on -count=1 ./...
       - run: go build ./cmd/ora2csv
+
+  windows-lock:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+      - run: go test -race -count=1 ./cmd/ora2csv

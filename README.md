@@ -271,7 +271,8 @@ ora2csv is commonly used for periodic incremental data export to data warehouses
 
 ## Operational Limitations
 
-- Do not run multiple exporters against the same state file or S3 prefix concurrently. Distributed state locking is not yet implemented.
+- Local exporters using the same state path are serialized with a persistent `<state-file>.lock` sidecar. The OS lock, not sidecar existence, indicates ownership.
+- Separate hosts or containers can still race against the same S3 state object. Distributed state locking is not yet implemented.
 - Timestamp watermarks require source SQL and downstream ingestion to account for transaction timing. For long-running source transactions, use an overlap window and deduplicate by primary key and version, or use Oracle CDC/SCN-based extraction.
 - Hard deletes are not represented by timestamp-filtered queries. Use tombstones, audit tables, CDC, or periodic reconciliation when deletes must be synchronized.
 - S3 mode requires local disk space for one completed entity CSV. The file is uploaded after it has been written successfully.

@@ -200,6 +200,17 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	stateLock, err := acquireStateLock(cfg.StateFile)
+	if err != nil {
+		logger.Error("Failed to acquire state lock: %v", err)
+		return err
+	}
+	defer func() {
+		if closeErr := stateLock.Close(); closeErr != nil {
+			logger.Error("Failed to release state lock: %v", closeErr)
+		}
+	}()
+
 	// Initialize S3 client if enabled
 	var s3Client *storage.S3Client
 	var s3StateKey string

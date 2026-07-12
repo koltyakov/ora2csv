@@ -58,6 +58,9 @@ func TestRunExport_DryRunHasNoRemoteOrFilesystemSideEffects(t *testing.T) {
 	if _, err := os.Stat(exportDir); !os.IsNotExist(err) {
 		t.Fatal("dry-run created the export directory")
 	}
+	if _, err := os.Stat(statePath + ".lock"); !os.IsNotExist(err) {
+		t.Fatal("dry-run created a state lock")
+	}
 	after, err := os.ReadFile(statePath)
 	if err != nil {
 		t.Fatalf("ReadFile(state) error: %v", err)

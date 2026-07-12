@@ -40,6 +40,7 @@ Thumbs.db
 tmp/
 *.csv
 *.log
+*.lock
 state.json
 !state.json.example
 

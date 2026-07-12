@@ -265,7 +265,7 @@ The local copy is retained for diagnosis, but an existing S3 state object remain
 
 ### Concurrency
 
-Run only one exporter for a given state object and S3 prefix. Conditional state updates and distributed locking are not yet implemented.
+Local exporters sharing the same state path are serialized with an advisory lock. Separate hosts or containers can still race against the same S3 state object; conditional state updates and distributed locking are not yet implemented.
 
 ### Organization
 

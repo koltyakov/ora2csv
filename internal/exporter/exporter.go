@@ -191,7 +191,10 @@ func (e *Exporter) getStartDate(entity types.EntityState) (time.Time, error) {
 
 // loadSQLFile reads the SQL file for an entity
 func (e *Exporter) loadSQLFile(entityName string) (string, error) {
-	sqlPath := e.st.GetSQLPath(e.cfg.SQLDir, entityName)
+	sqlPath, err := e.st.GetSQLPath(e.cfg.SQLDir, entityName)
+	if err != nil {
+		return "", fmt.Errorf("invalid SQL path for entity %s: %w", entityName, err)
+	}
 
 	content, err := os.ReadFile(sqlPath)
 	if err != nil {

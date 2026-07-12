@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -151,6 +152,74 @@ func TestLoad(t *testing.T) {
 	})
 }
 
+func TestLoad_StrictValidation(t *testing.T) {
+	validEntity := `{"entity":"crm.orders","lastRunTime":"","active":true}`
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{name: "top-level null", content: `null`},
+		{name: "trailing document", content: `[] []`},
+		{name: "unknown field", content: `[{"entity":"crm.orders","lastRunTime":"","active":true,"actve":true}]`},
+		{name: "missing entity", content: `[{"lastRunTime":"","active":true}]`},
+		{name: "missing timestamp", content: `[{"entity":"crm.orders","active":true}]`},
+		{name: "missing active", content: `[{"entity":"crm.orders","lastRunTime":""}]`},
+		{name: "null field", content: `[{"entity":null,"lastRunTime":"","active":true}]`},
+		{name: "empty entity", content: `[{"entity":"","lastRunTime":"","active":true}]`},
+		{name: "surrounding whitespace", content: `[{"entity":" crm.orders ","lastRunTime":"","active":true}]`},
+		{name: "parent traversal", content: `[{"entity":"../outside","lastRunTime":"","active":true}]`},
+		{name: "windows traversal", content: `[{"entity":"..\\outside","lastRunTime":"","active":true}]`},
+		{name: "nested entity", content: `[{"entity":"crm/orders","lastRunTime":"","active":true}]`},
+		{name: "dot entity", content: `[{"entity":".","lastRunTime":"","active":true}]`},
+		{name: "invalid timestamp", content: `[{"entity":"crm.orders","lastRunTime":"yesterday","active":true}]`},
+		{name: "duplicate entity", content: `[` + validEntity + `,` + validEntity + `]`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			statePath := filepath.Join(tmpDir, "state.json")
+			mustWriteFile(t, statePath, tt.content)
+
+			if _, err := Load(statePath, nil, ""); err == nil {
+				t.Fatal("Load() error = nil, want validation error")
+			}
+		})
+	}
+
+	t.Run("empty array is valid", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		statePath := filepath.Join(tmpDir, "state.json")
+		mustWriteFile(t, statePath, `[]`)
+		st, err := Load(statePath, nil, "")
+		if err != nil {
+			t.Fatalf("Load() error: %v", err)
+		}
+		if st.TotalCount() != 0 {
+			t.Fatalf("TotalCount() = %d, want 0", st.TotalCount())
+		}
+	})
+}
+
+func TestLoad_InvalidRemoteDoesNotReplaceLocal(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+	localState := `[{"entity":"local.entity","lastRunTime":"","active":true}]`
+	mustWriteFile(t, statePath, localState)
+	remote := &fakeRemoteStore{exists: true, data: []byte(`[{"entity":"../outside","lastRunTime":"","active":true}]`)}
+
+	if _, err := Load(statePath, remote, "state.json"); err == nil {
+		t.Fatal("Load() error = nil, want invalid remote state error")
+	}
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error: %v", err)
+	}
+	if string(data) != localState {
+		t.Fatalf("local state was replaced: got %q, want %q", data, localState)
+	}
+}
+
 func TestGetEntities(t *testing.T) {
 	tmpDir := t.TempDir()
 	statePath := filepath.Join(tmpDir, "state.json")
@@ -237,6 +306,18 @@ func TestFindEntity(t *testing.T) {
 		}
 	})
 
+	t.Run("returned entity is a copy", func(t *testing.T) {
+		entity, found := st.FindEntity("test.entity1")
+		if !found {
+			t.Fatal("expected entity to be found")
+		}
+		entity.Entity = "modified"
+		stored, found := st.FindEntity("test.entity1")
+		if !found || stored.Entity != "test.entity1" {
+			t.Fatal("FindEntity() exposed mutable internal state")
+		}
+	})
+
 	t.Run("entity not found", func(t *testing.T) {
 		_, found := st.FindEntity("nonexistent")
 		if found {
@@ -295,6 +376,63 @@ func TestUpdateEntityTimestamp_NotFound(t *testing.T) {
 	err = st.UpdateEntityTimestamp("nonexistent", "2025-01-15T12:00:00")
 	if err == nil {
 		t.Error("expected error for nonexistent entity, got nil")
+	}
+}
+
+func TestUpdateEntityTimestamp_RemoteFailureDoesNotLeak(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+	testState := `[
+  {"entity":"test.entity1","lastRunTime":"2025-01-01T00:00:00","active":true},
+  {"entity":"test.entity2","lastRunTime":"2025-01-01T00:00:00","active":true}
+]`
+	mustWriteFile(t, statePath, testState)
+	remote := &fakeRemoteStore{uploadErr: errors.New("upload failed")}
+	st, err := Load(statePath, remote, "state.json")
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if err := st.UpdateEntityTimestamp("test.entity1", "2025-01-02T00:00:00"); err == nil {
+		t.Fatal("UpdateEntityTimestamp() error = nil, want upload failure")
+	}
+	entity, _ := st.FindEntity("test.entity1")
+	if entity.LastRunTime != "2025-01-01T00:00:00" {
+		t.Fatalf("failed update changed memory to %q", entity.LastRunTime)
+	}
+
+	remote.uploadErr = nil
+	if err := st.UpdateEntityTimestamp("test.entity2", "2025-01-03T00:00:00"); err != nil {
+		t.Fatalf("second UpdateEntityTimestamp() error: %v", err)
+	}
+	var uploaded []struct {
+		Entity      string `json:"entity"`
+		LastRunTime string `json:"lastRunTime"`
+	}
+	if err := json.Unmarshal(remote.uploaded, &uploaded); err != nil {
+		t.Fatalf("Unmarshal(uploaded) error: %v", err)
+	}
+	if uploaded[0].LastRunTime != "2025-01-01T00:00:00" || uploaded[1].LastRunTime != "2025-01-03T00:00:00" {
+		t.Fatalf("uploaded state leaked failed update: %+v", uploaded)
+	}
+}
+
+func TestUpdateEntityTimestamp_LocalFailureDoesNotMutateMemory(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+	mustWriteFile(t, statePath, `[{"entity":"test.entity","lastRunTime":"2025-01-01T00:00:00","active":true}]`)
+	st, err := Load(statePath, nil, "")
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	st.path = filepath.Join(tmpDir, "missing", "state.json")
+
+	if err := st.UpdateEntityTimestamp("test.entity", "2025-01-02T00:00:00"); err == nil {
+		t.Fatal("UpdateEntityTimestamp() error = nil, want local save failure")
+	}
+	entity, _ := st.FindEntity("test.entity")
+	if entity.LastRunTime != "2025-01-01T00:00:00" {
+		t.Fatalf("failed update changed memory to %q", entity.LastRunTime)
 	}
 }
 
@@ -369,14 +507,35 @@ func TestValidateSQLFiles(t *testing.T) {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
+
+	t.Run("directory is rejected as SQL file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		statePath := filepath.Join(tmpDir, "state.json")
+		sqlDir := filepath.Join(tmpDir, "sql")
+		mustWriteFile(t, statePath, `[{"entity":"test.entity","lastRunTime":"","active":true}]`)
+		mustMkdirAll(t, filepath.Join(sqlDir, "test.entity.sql"))
+		st, err := Load(statePath, nil, "")
+		if err != nil {
+			t.Fatalf("Load() error: %v", err)
+		}
+		if err := st.ValidateSQLFiles(sqlDir); err == nil {
+			t.Fatal("ValidateSQLFiles() error = nil, want non-regular file error")
+		}
+	})
 }
 
 func TestGetSQLPath(t *testing.T) {
 	st := &File{}
-	path := st.GetSQLPath("/app/sql", "test.entity")
+	path, err := st.GetSQLPath("/app/sql", "test.entity")
+	if err != nil {
+		t.Fatalf("GetSQLPath() error: %v", err)
+	}
 	expected := "/app/sql/test.entity.sql"
 	if path != expected {
 		t.Errorf("got %q, want %q", path, expected)
+	}
+	if _, err := st.GetSQLPath("/app/sql", "../outside"); err == nil {
+		t.Fatal("GetSQLPath() error = nil, want traversal error")
 	}
 }
 
@@ -495,5 +654,38 @@ func TestSave_Atomic(t *testing.T) {
 	}
 	if st2.TotalCount() != 1 {
 		t.Errorf("got %d entities, want 1", st2.TotalCount())
+	}
+}
+
+func TestSave_UsesUniqueTemporaryFileAndPreservesMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+	mustWriteFile(t, statePath, `[{"entity":"test.entity","lastRunTime":"","active":true}]`)
+	if err := os.Chmod(statePath, 0600); err != nil {
+		t.Fatalf("Chmod() error: %v", err)
+	}
+	legacyTempPath := statePath + ".tmp"
+	mustMkdirAll(t, legacyTempPath)
+	st, err := Load(statePath, nil, "")
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if err := st.UpdateEntityTimestamp("test.entity", "2025-01-01T00:00:00"); err != nil {
+		t.Fatalf("UpdateEntityTimestamp() error: %v", err)
+	}
+	info, err := os.Stat(statePath)
+	if err != nil {
+		t.Fatalf("Stat() error: %v", err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("state mode = %o, want 600", info.Mode().Perm())
+	}
+	matches, err := filepath.Glob(filepath.Join(tmpDir, ".state.json.tmp-*"))
+	if err != nil {
+		t.Fatalf("Glob() error: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("temporary files remain: %v", matches)
 	}
 }

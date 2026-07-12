@@ -1,9 +1,12 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -52,11 +55,15 @@ func Load(path string, s3 remoteStore, s3Key string) (*File, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to download S3 state file %s: %w", s3Key, err)
 			}
-			// Successfully downloaded from S3, save local copy
-			if err := os.WriteFile(path, data, 0644); err != nil {
+			// Validate remote state before replacing the local recovery copy.
+			parsed, err := parseState(data, path, s3, s3Key)
+			if err != nil {
+				return nil, err
+			}
+			if err := replaceFileAtomic(path, data); err != nil {
 				return nil, fmt.Errorf("failed to write local state file %s: %w", path, err)
 			}
-			return parseState(data, path, s3, s3Key)
+			return parsed, nil
 		}
 		s3StateMissing = true
 	}
@@ -81,9 +88,48 @@ func Load(path string, s3 remoteStore, s3Key string) (*File, error) {
 
 // parseState parses state data and returns a File
 func parseState(data []byte, path string, s3 remoteStore, s3Key string) (*File, error) {
-	var entities []types.EntityState
-	if err := json.Unmarshal(data, &entities); err != nil {
+	type rawEntityState struct {
+		Entity      *string `json:"entity"`
+		LastRunTime *string `json:"lastRunTime"`
+		Active      *bool   `json:"active"`
+	}
+
+	var rawEntities []rawEntityState
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&rawEntities); err != nil {
 		return nil, fmt.Errorf("failed to parse state file: %w", err)
+	}
+	if rawEntities == nil {
+		return nil, fmt.Errorf("failed to parse state file: expected a JSON array")
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return nil, fmt.Errorf("failed to parse state file: %w", err)
+	}
+
+	entities := make([]types.EntityState, len(rawEntities))
+	seen := make(map[string]struct{}, len(rawEntities))
+	for i, raw := range rawEntities {
+		if raw.Entity == nil || raw.LastRunTime == nil || raw.Active == nil {
+			return nil, fmt.Errorf("failed to parse state file: entity at index %d must define entity, lastRunTime, and active", i)
+		}
+		if err := validateEntityName(*raw.Entity); err != nil {
+			return nil, fmt.Errorf("failed to parse state file: entity at index %d: %w", i, err)
+		}
+		if _, exists := seen[*raw.Entity]; exists {
+			return nil, fmt.Errorf("failed to parse state file: duplicate entity %q", *raw.Entity)
+		}
+		seen[*raw.Entity] = struct{}{}
+
+		entity := types.EntityState{
+			Entity:      *raw.Entity,
+			LastRunTime: *raw.LastRunTime,
+			Active:      *raw.Active,
+		}
+		if _, err := entity.GetLastRunTime(); err != nil {
+			return nil, fmt.Errorf("failed to parse state file: entity %q has invalid lastRunTime: %w", entity.Entity, err)
+		}
+		entities[i] = entity
 	}
 
 	return &File{
@@ -92,6 +138,33 @@ func parseState(data []byte, path string, s3 remoteStore, s3Key string) (*File, 
 		s3:       s3,
 		s3Key:    s3Key,
 	}, nil
+}
+
+func ensureJSONEOF(decoder *json.Decoder) error {
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("unexpected data after state array")
+		}
+		return err
+	}
+	return nil
+}
+
+func validateEntityName(name string) error {
+	if name == "" {
+		return fmt.Errorf("entity name is required")
+	}
+	if name != strings.TrimSpace(name) {
+		return fmt.Errorf("entity name %q must not contain surrounding whitespace", name)
+	}
+	if name == "." || name == ".." || filepath.IsAbs(name) || filepath.VolumeName(name) != "" {
+		return fmt.Errorf("invalid entity name %q", name)
+	}
+	if strings.ContainsAny(name, "/\\\x00") {
+		return fmt.Errorf("entity name %q must be a single path component", name)
+	}
+	return nil
 }
 
 // GetEntities returns all entities
@@ -125,7 +198,8 @@ func (f *File) FindEntity(name string) (*types.EntityState, bool) {
 
 	for i := range f.entities {
 		if f.entities[i].Entity == name {
-			return &f.entities[i], true
+			entity := f.entities[i]
+			return &entity, true
 		}
 	}
 	return nil, false
@@ -136,10 +210,16 @@ func (f *File) UpdateEntityTimestamp(entityName string, timestamp string) error 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	candidate := make([]types.EntityState, len(f.entities))
+	copy(candidate, f.entities)
+
 	found := false
-	for i := range f.entities {
-		if f.entities[i].Entity == entityName {
-			f.entities[i].LastRunTime = timestamp
+	for i := range candidate {
+		if candidate[i].Entity == entityName {
+			candidate[i].LastRunTime = timestamp
+			if _, err := candidate[i].GetLastRunTime(); err != nil {
+				return fmt.Errorf("invalid timestamp for entity %s: %w", entityName, err)
+			}
 			found = true
 			break
 		}
@@ -149,14 +229,18 @@ func (f *File) UpdateEntityTimestamp(entityName string, timestamp string) error 
 		return fmt.Errorf("entity not found: %s", entityName)
 	}
 
-	return f.save()
+	if err := f.save(candidate); err != nil {
+		return err
+	}
+	f.entities = candidate
+	return nil
 }
 
 // save writes the state to disk atomically and uploads to S3 if configured
-func (f *File) save() error {
+func (f *File) save(entities []types.EntityState) error {
 	// Sort entities by name for consistent output
-	sorted := make([]types.EntityState, len(f.entities))
-	copy(sorted, f.entities)
+	sorted := make([]types.EntityState, len(entities))
+	copy(sorted, entities)
 	sort.Slice(sorted, func(i, j int) bool {
 		return sorted[i].Entity < sorted[j].Entity
 	})
@@ -166,18 +250,8 @@ func (f *File) save() error {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
 
-	// Write to temporary file first
-	tmpPath := f.path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write temp file: %w", err)
-	}
-
-	// Atomic rename
-	if err := os.Rename(tmpPath, f.path); err != nil {
-		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
-			return fmt.Errorf("failed to rename temp file: %w (additionally failed to remove temp file: %v)", err, removeErr)
-		}
-		return fmt.Errorf("failed to rename temp file: %w", err)
+	if err := replaceFileAtomic(f.path, data); err != nil {
+		return fmt.Errorf("failed to save state file: %w", err)
 	}
 
 	// Upload to S3 if configured
@@ -193,9 +267,65 @@ func (f *File) save() error {
 	return nil
 }
 
+func replaceFileAtomic(path string, data []byte) (retErr error) {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		if tmp != nil {
+			retErr = errors.Join(retErr, tmp.Close())
+		}
+		if err := os.Remove(tmpPath); err != nil && !os.IsNotExist(err) {
+			retErr = errors.Join(retErr, err)
+		}
+	}()
+
+	if info, err := os.Stat(path); err == nil {
+		if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	closeErr := tmp.Close()
+	tmp = nil
+	if closeErr != nil {
+		return closeErr
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	return nil
+}
+
 // GetSQLPath returns the path to the SQL file for an entity
-func (f *File) GetSQLPath(sqlDir, entityName string) string {
-	return filepath.Join(sqlDir, entityName+".sql")
+func (f *File) GetSQLPath(sqlDir, entityName string) (string, error) {
+	if err := validateEntityName(entityName); err != nil {
+		return "", err
+	}
+	path := filepath.Join(sqlDir, entityName+".sql")
+	base, err := filepath.Abs(sqlDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve SQL directory: %w", err)
+	}
+	resolved, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve SQL path: %w", err)
+	}
+	rel, err := filepath.Rel(base, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("SQL path escapes configured directory for entity %q", entityName)
+	}
+	return path, nil
 }
 
 // ValidateSQLFiles checks if SQL files exist for all active entities
@@ -206,9 +336,20 @@ func (f *File) ValidateSQLFiles(sqlDir string) error {
 	var missing []string
 	for _, e := range f.entities {
 		if e.Active {
-			sqlPath := f.GetSQLPath(sqlDir, e.Entity)
-			if _, err := os.Stat(sqlPath); os.IsNotExist(err) {
+			sqlPath, err := f.GetSQLPath(sqlDir, e.Entity)
+			if err != nil {
+				return err
+			}
+			info, err := os.Stat(sqlPath)
+			if os.IsNotExist(err) {
 				missing = append(missing, e.Entity)
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("failed to access SQL file %s: %w", sqlPath, err)
+			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("SQL path is not a regular file: %s", sqlPath)
 			}
 		}
 	}

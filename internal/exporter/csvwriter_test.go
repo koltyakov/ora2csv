@@ -1,7 +1,10 @@
 package exporter
 
 import (
+	"context"
 	"database/sql"
+	"errors"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -14,10 +17,10 @@ func mustCloseCSVWriter(t *testing.T, w *CSVWriter) {
 	}
 }
 
-func mustCloseStreamingCSVWriter(t *testing.T, w *StreamingCSVWriter) {
+func mustAbortStreamingCSVWriter(t *testing.T, w *StreamingCSVWriter) {
 	t.Helper()
-	if err := w.Close(); err != nil {
-		t.Fatalf("Close() error = %v", err)
+	if err := w.Abort(); err != nil {
+		t.Fatalf("Abort() error = %v", err)
 	}
 }
 
@@ -260,7 +263,7 @@ func TestNewStreamingCSVWriter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStreamingCSVWriter() error = %v", err)
 	}
-	defer mustCloseStreamingCSVWriter(t, writer)
+	defer mustAbortStreamingCSVWriter(t, writer)
 
 	if writer.csv == nil {
 		t.Error("csv writer is nil")
@@ -270,6 +273,9 @@ func TestNewStreamingCSVWriter(t *testing.T) {
 	}
 	if len(writer.rowValues) != 3 {
 		t.Errorf("rowValues length = %d, want 3", len(writer.rowValues))
+	}
+	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
+		t.Fatal("final file is visible before commit")
 	}
 }
 
@@ -281,7 +287,7 @@ func TestStreamingCSVWriter_GetScanTargets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStreamingCSVWriter() error = %v", err)
 	}
-	defer mustCloseStreamingCSVWriter(t, writer)
+	defer mustAbortStreamingCSVWriter(t, writer)
 
 	targets := writer.GetScanTargets()
 	if len(targets) != 2 {
@@ -308,7 +314,7 @@ func TestStreamingCSVWriter_WriteScannedRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStreamingCSVWriter() error = %v", err)
 	}
-	defer mustCloseStreamingCSVWriter(t, writer)
+	defer mustAbortStreamingCSVWriter(t, writer)
 
 	// Simulate scanned values
 	targets := writer.GetScanTargets()
@@ -335,7 +341,7 @@ func TestStreamingCSVWriter_PreservesEmptyStringVsNull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStreamingCSVWriter() error = %v", err)
 	}
-	defer mustCloseStreamingCSVWriter(t, writer)
+	defer mustAbortStreamingCSVWriter(t, writer)
 
 	if err := writer.WriteHeaders([]string{"col1", "col2"}); err != nil {
 		t.Fatalf("WriteHeaders() error = %v", err)
@@ -366,6 +372,9 @@ func TestStreamingCSVWriter_PreservesEmptyStringVsNull(t *testing.T) {
 
 	if err := writer.Flush(); err != nil {
 		t.Fatalf("Flush() error = %v", err)
+	}
+	if err := writer.Commit(context.Background()); err != nil {
+		t.Fatalf("Commit() error = %v", err)
 	}
 
 	// In CSV output both empty string and NULL serialize to empty field; this test
@@ -408,15 +417,15 @@ func TestStreamingCSVWriter_FullWorkflow(t *testing.T) {
 		}
 	}
 
-	// Flush and close
+	// Flush and commit
 	err = writer.Flush()
 	if err != nil {
 		t.Errorf("Flush() error = %v", err)
 	}
 
-	err = writer.Close()
+	err = writer.Commit(context.Background())
 	if err != nil {
-		t.Errorf("Close() error = %v", err)
+		t.Errorf("Commit() error = %v", err)
 	}
 
 	// Verify file content
@@ -429,6 +438,47 @@ func TestStreamingCSVWriter_FullWorkflow(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(content), "\n")
 	if len(lines) != 4 { // header + 3 rows
 		t.Errorf("expected 4 lines, got %d", len(lines))
+	}
+}
+
+func TestStreamingCSVWriter_AbortPreservesExistingFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := tmpDir + "/test.csv"
+	mustWriteTestFile(t, filePath, "existing\n")
+	writer, err := NewStreamingCSVWriter(filePath, 1)
+	if err != nil {
+		t.Fatalf("NewStreamingCSVWriter() error = %v", err)
+	}
+	if err := writer.WriteHeaders([]string{"id"}); err != nil {
+		t.Fatalf("WriteHeaders() error = %v", err)
+	}
+	if err := writer.Abort(); err != nil {
+		t.Fatalf("Abort() error = %v", err)
+	}
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(data) != "existing\n" {
+		t.Fatalf("existing destination changed to %q", data)
+	}
+}
+
+func TestStreamingCSVWriter_UsesUniqueTemporaryFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := tmpDir + "/test.csv"
+	first, err := NewStreamingCSVWriter(filePath, 1)
+	if err != nil {
+		t.Fatalf("first NewStreamingCSVWriter() error = %v", err)
+	}
+	defer mustAbortStreamingCSVWriter(t, first)
+	second, err := NewStreamingCSVWriter(filePath, 1)
+	if err != nil {
+		t.Fatalf("second NewStreamingCSVWriter() error = %v", err)
+	}
+	defer mustAbortStreamingCSVWriter(t, second)
+	if first.tempPath == second.tempPath {
+		t.Fatalf("writers share temporary path %q", first.tempPath)
 	}
 }
 
@@ -537,50 +587,137 @@ func TestRemoveEmpty(t *testing.T) {
 }
 
 func TestS3StreamingCSVWriter(t *testing.T) {
-	t.Run("creates new writer", func(t *testing.T) {
+	t.Run("successful commit uploads and removes local file", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		localPath := tmpDir + "/test.csv"
-
-		// Note: S3StreamingCSVWriter needs a mock S3 client for full testing
-		// This test just verifies construction
-		writer := &S3StreamingCSVWriter{
-			csv:         &CSVWriter{},
-			localPath:   localPath,
-			dest:        make([]interface{}, 2),
-			rowValues:   make([]sql.NullString, 2),
-			columnCount: 2,
+		uploader := &fakeStreamUploader{}
+		writer, err := NewS3StreamingCSVWriter(uploader, "exports/test.csv", localPath, 1)
+		if err != nil {
+			t.Fatalf("NewS3StreamingCSVWriter() error = %v", err)
 		}
-
-		if writer.localPath != localPath {
-			t.Errorf("localPath = %q, want %q", writer.localPath, localPath)
+		if err := writer.WriteHeaders([]string{"id"}); err != nil {
+			t.Fatalf("WriteHeaders() error = %v", err)
 		}
-		if len(writer.dest) != 2 {
-			t.Errorf("dest length = %d, want 2", len(writer.dest))
+		target := writer.GetScanTargets()[0].(*sql.NullString)
+		target.String, target.Valid = "1", true
+		if err := writer.WriteScannedRow(); err != nil {
+			t.Fatalf("WriteScannedRow() error = %v", err)
+		}
+		type contextKey string
+		ctx := context.WithValue(context.Background(), contextKey("run"), "test-run")
+		if err := writer.Commit(ctx); err != nil {
+			t.Fatalf("Commit() error = %v", err)
+		}
+		if uploader.calls != 1 || uploader.key != "exports/test.csv" {
+			t.Fatalf("upload = (%d, %q), want (1, exports/test.csv)", uploader.calls, uploader.key)
+		}
+		if string(uploader.data) != "id\n1\n" {
+			t.Fatalf("uploaded data = %q", uploader.data)
+		}
+		if uploader.ctx.Value(contextKey("run")) != "test-run" {
+			t.Fatal("upload did not receive caller context")
+		}
+		if _, err := os.Stat(localPath); !os.IsNotExist(err) {
+			t.Fatal("local file remains after successful upload")
+		}
+	})
+
+	t.Run("upload failure preserves completed local file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		localPath := tmpDir + "/test.csv"
+		uploader := &fakeStreamUploader{err: errors.New("upload failed")}
+		writer, err := NewS3StreamingCSVWriter(uploader, "exports/test.csv", localPath, 1)
+		if err != nil {
+			t.Fatalf("NewS3StreamingCSVWriter() error = %v", err)
+		}
+		if err := writer.WriteHeaders([]string{"id"}); err != nil {
+			t.Fatalf("WriteHeaders() error = %v", err)
+		}
+		if err := writer.Commit(context.Background()); err == nil {
+			t.Fatal("Commit() error = nil, want upload failure")
+		}
+		if _, err := os.Stat(localPath); err != nil {
+			t.Fatalf("local fallback missing: %v", err)
+		}
+		if err := writer.Abort(); err != nil {
+			t.Fatalf("Abort() error = %v", err)
+		}
+		if _, err := os.Stat(localPath); err != nil {
+			t.Fatalf("abort removed local fallback: %v", err)
 		}
 	})
 
-	t.Run("GetScanTargets returns correct number", func(t *testing.T) {
-		writer := &S3StreamingCSVWriter{
-			dest:        make([]interface{}, 3),
-			rowValues:   make([]sql.NullString, 3),
-			columnCount: 3,
+	t.Run("abort never uploads", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		localPath := tmpDir + "/test.csv"
+		uploader := &fakeStreamUploader{}
+		writer, err := NewS3StreamingCSVWriter(uploader, "exports/test.csv", localPath, 1)
+		if err != nil {
+			t.Fatalf("NewS3StreamingCSVWriter() error = %v", err)
 		}
-
-		targets := writer.GetScanTargets()
-		if len(targets) != 3 {
-			t.Errorf("targets length = %d, want 3", len(targets))
+		if err := writer.WriteHeaders([]string{"id"}); err != nil {
+			t.Fatalf("WriteHeaders() error = %v", err)
+		}
+		if err := writer.Abort(); err != nil {
+			t.Fatalf("Abort() error = %v", err)
+		}
+		if uploader.calls != 0 {
+			t.Fatalf("uploads = %d, want 0", uploader.calls)
+		}
+		if _, err := os.Stat(localPath); !os.IsNotExist(err) {
+			t.Fatal("final file exists after abort")
 		}
 	})
 
-	t.Run("GetLocalPath returns path", func(t *testing.T) {
-		writer := &S3StreamingCSVWriter{
-			localPath: "/tmp/test.csv",
+	t.Run("upload observes cancellation", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		localPath := tmpDir + "/test.csv"
+		ctx, cancel := context.WithCancel(context.Background())
+		uploader := &fakeStreamUploader{onUpload: cancel, waitForCancellation: true}
+		writer, err := NewS3StreamingCSVWriter(uploader, "exports/test.csv", localPath, 1)
+		if err != nil {
+			t.Fatalf("NewS3StreamingCSVWriter() error = %v", err)
 		}
-
-		if writer.GetLocalPath() != "/tmp/test.csv" {
-			t.Errorf("GetLocalPath() = %q, want %q", writer.GetLocalPath(), "/tmp/test.csv")
+		if err := writer.WriteHeaders([]string{"id"}); err != nil {
+			t.Fatalf("WriteHeaders() error = %v", err)
+		}
+		err = writer.Commit(ctx)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Commit() error = %v, want context.Canceled", err)
+		}
+		if _, err := os.Stat(localPath); err != nil {
+			t.Fatalf("local fallback missing: %v", err)
 		}
 	})
+}
+
+type fakeStreamUploader struct {
+	calls               int
+	key                 string
+	data                []byte
+	ctx                 context.Context
+	err                 error
+	onUpload            func()
+	waitForCancellation bool
+}
+
+func (f *fakeStreamUploader) UploadStream(ctx context.Context, key string, reader io.Reader) error {
+	f.calls++
+	f.key = key
+	f.ctx = ctx
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return err
+	}
+	f.data = data
+	if f.onUpload != nil {
+		f.onUpload()
+	}
+	if f.waitForCancellation {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return f.err
 }
 
 func TestRowScannerInterface(t *testing.T) {

@@ -12,8 +12,17 @@ import (
 // DB defines the interface for database operations
 type DB interface {
 	Close() error
-	QueryContext(ctx context.Context, query string, args map[string]interface{}) (*sql.Rows, error)
+	QueryContext(ctx context.Context, query string, args map[string]interface{}) (RowScanner, error)
 	Ping(ctx context.Context) error
+}
+
+// RowScanner is the subset of sql.Rows used by the exporter.
+type RowScanner interface {
+	Next() bool
+	Scan(dest ...interface{}) error
+	Columns() ([]string, error)
+	Close() error
+	Err() error
 }
 
 // OracleDB implements the DB interface using go-ora
@@ -71,7 +80,7 @@ func (o *OracleDB) Close() error {
 }
 
 // QueryContext executes a query with context and named parameters
-func (o *OracleDB) QueryContext(ctx context.Context, query string, args map[string]interface{}) (*sql.Rows, error) {
+func (o *OracleDB) QueryContext(ctx context.Context, query string, args map[string]interface{}) (RowScanner, error) {
 	// go-ora v2 supports named parameters using :param syntax
 	// We need to convert the args map to the format expected by go-ora
 	return o.conn.QueryContext(ctx, query, argsToSlice(args)...)

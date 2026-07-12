@@ -6,11 +6,11 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
-
-	"github.com/koltyakov/ora2csv/internal/storage"
 )
 
 // CSVWriter handles streaming CSV writing with RFC 4180 compliance
@@ -28,6 +28,10 @@ func NewCSVWriter(filePath string) (*CSVWriter, error) {
 		return nil, fmt.Errorf("failed to create file: %w", err)
 	}
 
+	return newCSVWriter(file), nil
+}
+
+func newCSVWriter(file *os.File) *CSVWriter {
 	writer := csv.NewWriter(file)
 	// Use Unix line endings (LF)
 	writer.UseCRLF = false
@@ -35,7 +39,7 @@ func NewCSVWriter(filePath string) (*CSVWriter, error) {
 	return &CSVWriter{
 		writer: writer,
 		file:   file,
-	}, nil
+	}
 }
 
 // WriteHeaders writes the CSV header row
@@ -108,20 +112,21 @@ func (w *CSVWriter) Flush() error {
 
 // Close closes the writer and file
 func (w *CSVWriter) Close() error {
+	var errs []error
 	if w.writer != nil {
 		w.writer.Flush()
 		if err := w.writer.Error(); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 		w.writer = nil
 	}
 	if w.file != nil {
 		if err := w.file.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
-			return err
+			errs = append(errs, err)
 		}
 		w.file = nil
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // RowCount returns the number of data rows written (excluding header)
@@ -155,19 +160,33 @@ type StreamingCSVWriter struct {
 	csv       *CSVWriter
 	dest      []interface{}
 	rowValues []sql.NullString
+	finalPath string
+	tempPath  string
+	state     writerState
 }
+
+type writerState uint8
+
+const (
+	writerOpen writerState = iota
+	writerCommitted
+	writerAborted
+)
 
 // NewStreamingCSVWriter creates a writer optimized for streaming database rows
 func NewStreamingCSVWriter(filePath string, columnCount int) (*StreamingCSVWriter, error) {
-	csvWriter, err := NewCSVWriter(filePath)
+	file, err := os.CreateTemp(filepath.Dir(filePath), "."+filepath.Base(filePath)+".tmp-*")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create temporary CSV file: %w", err)
 	}
 
 	return &StreamingCSVWriter{
-		csv:       csvWriter,
+		csv:       newCSVWriter(file),
 		dest:      make([]interface{}, columnCount),
 		rowValues: make([]sql.NullString, columnCount),
+		finalPath: filePath,
+		tempPath:  file.Name(),
+		state:     writerOpen,
 	}, nil
 }
 
@@ -199,11 +218,6 @@ func (w *StreamingCSVWriter) WriteHeaders(columns []string) error {
 	return w.csv.WriteHeaders(columns)
 }
 
-// Close closes the writer
-func (w *StreamingCSVWriter) Close() error {
-	return w.csv.Close()
-}
-
 // Flush flushes buffered data
 func (w *StreamingCSVWriter) Flush() error {
 	return w.csv.Flush()
@@ -214,9 +228,47 @@ func (w *StreamingCSVWriter) RowCount() int {
 	return w.csv.RowCount()
 }
 
-// Remove removes the file if no data was written
-func (w *StreamingCSVWriter) Remove() error {
-	return w.csv.Remove()
+// Commit flushes and atomically publishes the completed CSV.
+func (w *StreamingCSVWriter) Commit(ctx context.Context) error {
+	if w.state == writerCommitted {
+		return nil
+	}
+	if w.state == writerAborted {
+		return fmt.Errorf("CSV writer was aborted")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := w.csv.Flush(); err != nil {
+		return err
+	}
+	if w.csv.file != nil {
+		if err := w.csv.file.Sync(); err != nil {
+			return err
+		}
+	}
+	if err := w.csv.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(w.tempPath, w.finalPath); err != nil {
+		return fmt.Errorf("failed to publish CSV: %w", err)
+	}
+	w.state = writerCommitted
+	return nil
+}
+
+// Abort closes and removes an incomplete CSV without touching the destination.
+func (w *StreamingCSVWriter) Abort() error {
+	if w.state == writerCommitted || w.state == writerAborted {
+		return nil
+	}
+	w.state = writerAborted
+	closeErr := w.csv.Close()
+	removeErr := os.Remove(w.tempPath)
+	if os.IsNotExist(removeErr) {
+		removeErr = nil
+	}
+	return errors.Join(closeErr, removeErr)
 }
 
 // RowScanner is an interface for types that can be scanned to CSV
@@ -306,83 +358,72 @@ func RemoveEmpty(path string) error {
 	return nil
 }
 
-// S3StreamingCSVWriter streams CSV data directly to S3 via multipart upload
-// Data is buffered to a temp file during writing, then uploaded to S3 on Close()
-type S3StreamingCSVWriter struct {
-	csv         *CSVWriter
-	s3          *storage.S3Client
-	s3Key       string
-	localPath   string // For temp file during writing
-	dest        []interface{}
-	rowValues   []sql.NullString
-	columnCount int
-	skipUpload  bool
+type streamUploader interface {
+	UploadStream(context.Context, string, io.Reader) error
 }
 
-// NewS3StreamingCSVWriter creates a writer that streams to S3
-// The data is written to a temp file first, then uploaded to S3 on Close()
-func NewS3StreamingCSVWriter(s3 *storage.S3Client, s3Key, localPath string, columnCount int) (*S3StreamingCSVWriter, error) {
-	csvWriter, err := NewCSVWriter(localPath)
+// S3StreamingCSVWriter stages CSV data locally, then uploads it on commit.
+type S3StreamingCSVWriter struct {
+	writer    *StreamingCSVWriter
+	uploader  streamUploader
+	s3Key     string
+	localPath string
+	finalized bool
+	commitErr error
+	aborted   bool
+}
+
+// NewS3StreamingCSVWriter creates a writer that stages data locally for S3.
+// The completed data is published locally, then uploaded to S3 on Commit.
+func NewS3StreamingCSVWriter(uploader streamUploader, s3Key, localPath string, columnCount int) (*S3StreamingCSVWriter, error) {
+	writer, err := NewStreamingCSVWriter(localPath, columnCount)
 	if err != nil {
 		return nil, err
 	}
 
 	return &S3StreamingCSVWriter{
-		csv:         csvWriter,
-		s3:          s3,
-		s3Key:       s3Key,
-		localPath:   localPath,
-		dest:        make([]interface{}, columnCount),
-		rowValues:   make([]sql.NullString, columnCount),
-		columnCount: columnCount,
+		writer:    writer,
+		uploader:  uploader,
+		s3Key:     s3Key,
+		localPath: localPath,
 	}, nil
 }
 
 // GetScanTargets returns a slice of interface{} pointers for sql.Rows.Scan
 func (w *S3StreamingCSVWriter) GetScanTargets() []interface{} {
-	for i := range w.dest {
-		w.rowValues[i] = sql.NullString{}
-		w.dest[i] = &w.rowValues[i]
-	}
-	return w.dest
+	return w.writer.GetScanTargets()
 }
 
 // WriteScannedRow writes the most recently scanned row
 func (w *S3StreamingCSVWriter) WriteScannedRow() error {
-	values := make([]interface{}, len(w.rowValues))
-	for i, v := range w.rowValues {
-		if !v.Valid {
-			values[i] = nil
-		} else {
-			values[i] = v.String
-		}
-	}
-	return w.csv.WriteRow(values)
+	return w.writer.WriteScannedRow()
 }
 
 // WriteHeaders writes the header row
 func (w *S3StreamingCSVWriter) WriteHeaders(columns []string) error {
-	return w.csv.WriteHeaders(columns)
+	return w.writer.WriteHeaders(columns)
 }
 
-// Close flushes, uploads to S3, and removes the local temp file
-func (w *S3StreamingCSVWriter) Close() error {
-	// Flush and close the local file
-	if err := w.csv.Close(); err != nil {
+// Commit publishes the local fallback, uploads it to S3, and removes it on success.
+func (w *S3StreamingCSVWriter) Commit(ctx context.Context) error {
+	if w.finalized {
+		return w.commitErr
+	}
+	if w.aborted {
+		return fmt.Errorf("CSV writer was aborted")
+	}
+	if err := w.writer.Commit(ctx); err != nil {
 		return err
 	}
-	if w.skipUpload {
-		return nil
-	}
+	w.finalized = true
 
-	// Upload to S3
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	uploadCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	// Open the file for upload
 	file, err := os.Open(w.localPath)
 	if err != nil {
-		return fmt.Errorf("failed to open file for S3 upload: %w", err)
+		w.commitErr = fmt.Errorf("failed to open file for S3 upload: %w", err)
+		return w.commitErr
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
@@ -390,10 +431,10 @@ func (w *S3StreamingCSVWriter) Close() error {
 		}
 	}()
 
-	// Upload to S3 via multipart upload
-	if err := w.s3.UploadStream(ctx, w.s3Key, file); err != nil {
+	if err := w.uploader.UploadStream(uploadCtx, w.s3Key, file); err != nil {
 		// S3 upload failed - keep the local file as fallback
-		return fmt.Errorf("S3 upload failed: %w (local file kept at %s)", err, w.localPath)
+		w.commitErr = fmt.Errorf("S3 upload failed: %w (local file kept at %s)", err, w.localPath)
+		return w.commitErr
 	}
 
 	// S3 upload succeeded - remove local temp file
@@ -406,24 +447,24 @@ func (w *S3StreamingCSVWriter) Close() error {
 
 // Flush flushes buffered data
 func (w *S3StreamingCSVWriter) Flush() error {
-	return w.csv.Flush()
+	return w.writer.Flush()
 }
 
 // RowCount returns the number of rows written
 func (w *S3StreamingCSVWriter) RowCount() int {
-	return w.csv.RowCount()
+	return w.writer.RowCount()
 }
 
-// Remove removes the temp file
-func (w *S3StreamingCSVWriter) Remove() error {
-	if err := w.csv.Remove(); err != nil {
-		return err
+// Abort removes an incomplete local file and never uploads it.
+func (w *S3StreamingCSVWriter) Abort() error {
+	if w.finalized || w.aborted {
+		return nil
 	}
-	w.skipUpload = true
-	return nil
+	w.aborted = true
+	return w.writer.Abort()
 }
 
-// GetLocalPath returns the local temp file path
+// GetLocalPath returns the local fallback path.
 func (w *S3StreamingCSVWriter) GetLocalPath() string {
 	return w.localPath
 }

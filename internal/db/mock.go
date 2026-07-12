@@ -11,7 +11,7 @@ type MockDB struct {
 	// CloseFunc is called when Close is invoked
 	CloseFunc func() error
 	// QueryFunc is called when QueryContext is invoked
-	QueryFunc func(ctx context.Context, query string, args map[string]interface{}) (*sql.Rows, error)
+	QueryFunc func(ctx context.Context, query string, args map[string]interface{}) (RowScanner, error)
 	// PingFunc is called when Ping is invoked
 	PingFunc func(ctx context.Context) error
 	// Closed tracks if Close was called
@@ -24,7 +24,7 @@ func NewMockDB() *MockDB {
 		CloseFunc: func() error {
 			return nil
 		},
-		QueryFunc: func(ctx context.Context, query string, args map[string]interface{}) (*sql.Rows, error) {
+		QueryFunc: func(ctx context.Context, query string, args map[string]interface{}) (RowScanner, error) {
 			return nil, fmt.Errorf("no query result configured")
 		},
 		PingFunc: func(ctx context.Context) error {
@@ -43,7 +43,7 @@ func (m *MockDB) Close() error {
 }
 
 // QueryContext executes a query with context and named parameters
-func (m *MockDB) QueryContext(ctx context.Context, query string, args map[string]interface{}) (*sql.Rows, error) {
+func (m *MockDB) QueryContext(ctx context.Context, query string, args map[string]interface{}) (RowScanner, error) {
 	if m.QueryFunc != nil {
 		return m.QueryFunc(ctx, query, args)
 	}

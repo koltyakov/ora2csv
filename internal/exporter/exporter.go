@@ -141,7 +141,7 @@ func (e *Exporter) processEntity(ctx context.Context, entity types.EntityState, 
 	entityCtx, entityCancel := context.WithTimeout(ctx, e.cfg.QueryTimeout)
 	defer entityCancel()
 
-	rowCount, err := e.executeQueryToCSV(entityCtx, sqlContent, startDateStr, tillDateStr, outputFile, log)
+	rowCount, err := e.executeQueryToCSV(entityCtx, entity.Entity, sqlContent, startDateStr, tillDateStr, outputFile, log)
 	if err != nil {
 		log.Error("Failed to execute query: %v", err)
 		return types.EntityResult{
@@ -213,7 +213,7 @@ func (e *Exporter) getOutputPath(entityName, startDate string) string {
 }
 
 // executeQueryToCSV executes a query and streams results to CSV
-func (e *Exporter) executeQueryToCSV(ctx context.Context, sqlContent, startDate, tillDate, outputPath string, log *logging.Logger) (rowCount int, retErr error) {
+func (e *Exporter) executeQueryToCSV(ctx context.Context, entityName, sqlContent, startDate, tillDate, outputPath string, log *logging.Logger) (rowCount int, retErr error) {
 	// Prepare query parameters
 	params := map[string]interface{}{
 		"startDate": startDate,
@@ -225,7 +225,11 @@ func (e *Exporter) executeQueryToCSV(ctx context.Context, sqlContent, startDate,
 	if err != nil {
 		return 0, fmt.Errorf("query execution failed: %w", err)
 	}
+	rowsClosed := false
 	defer func() {
+		if rowsClosed {
+			return
+		}
 		if err := rows.Close(); err != nil {
 			retErr = errors.Join(retErr, fmt.Errorf("failed to close rows: %w", err))
 		}
@@ -242,9 +246,6 @@ func (e *Exporter) executeQueryToCSV(ctx context.Context, sqlContent, startDate,
 	if e.s3 != nil && e.cfg.S3.Bucket != "" {
 		// Generate S3 key from output path
 		safeDate := strings.ReplaceAll(startDate, ":", "-")
-		entityName := filepath.Base(outputPath)
-		entityName = strings.TrimSuffix(entityName, filepath.Ext(entityName))
-		entityName = strings.Split(entityName, "__")[0]
 		s3Key := e.cfg.S3.Key(fmt.Sprintf("%s/%s__%s.csv", entityName, entityName, safeDate))
 
 		log.Info("Streaming to S3: %s", s3Key)
@@ -263,18 +264,9 @@ func (e *Exporter) executeQueryToCSV(ctx context.Context, sqlContent, startDate,
 		}
 		writer = w
 	}
-	writeComplete := false
 	defer func() {
-		if writer == nil {
-			return
-		}
-		if !writeComplete {
-			if err := writer.Remove(); err != nil {
-				retErr = errors.Join(retErr, fmt.Errorf("failed to remove incomplete output: %w", err))
-			}
-		}
-		if err := writer.Close(); err != nil {
-			retErr = errors.Join(retErr, fmt.Errorf("failed to finalize output: %w", err))
+		if err := writer.Abort(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("failed to abort incomplete output: %w", err))
 		}
 	}()
 
@@ -305,19 +297,18 @@ func (e *Exporter) executeQueryToCSV(ctx context.Context, sqlContent, startDate,
 		return 0, fmt.Errorf("row iteration error: %w", err)
 	}
 
-	// Final flush
-	if err := writer.Flush(); err != nil {
-		return 0, fmt.Errorf("failed to flush writer: %w", err)
+	if err := rows.Close(); err != nil {
+		return rowCount, fmt.Errorf("failed to close rows: %w", err)
 	}
+	rowsClosed = true
 
-	// If no data rows, remove the file
 	if rowCount == 0 {
-		if err := writer.Remove(); err != nil {
-			return 0, fmt.Errorf("failed to remove empty output file: %w", err)
-		}
+		return 0, nil
 	}
 
-	writeComplete = true
+	if err := writer.Commit(ctx); err != nil {
+		return rowCount, fmt.Errorf("failed to finalize output: %w", err)
+	}
 	return rowCount, nil
 }
 
@@ -327,8 +318,8 @@ type csvWriter interface {
 	GetScanTargets() []interface{}
 	WriteScannedRow() error
 	Flush() error
-	Remove() error
-	Close() error
+	Commit(context.Context) error
+	Abort() error
 }
 
 // Validate validates configuration and SQL files

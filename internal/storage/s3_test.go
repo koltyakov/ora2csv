@@ -3,8 +3,11 @@ package storage
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -34,14 +37,44 @@ func TestNewS3Client(t *testing.T) {
 			Endpoint:  "http://localhost:9000",
 		}
 
-		// This will fail to connect but validates the config handling
-		_, err := NewS3Client(cfg)
-		// We expect some error due to network/context in test environment
-		// The important check is that bucket validation happens first
-		if err != nil && strings.Contains(err.Error(), "bucket") {
-			t.Errorf("unexpected bucket validation error: %v", err)
+		client, err := NewS3Client(cfg)
+		if err != nil {
+			t.Fatalf("NewS3Client() error: %v", err)
+		}
+		if client == nil {
+			t.Fatal("NewS3Client() returned nil client")
 		}
 	})
+}
+
+func TestS3Client_CheckConnectionIsReadOnly(t *testing.T) {
+	var mu sync.Mutex
+	var methods []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		methods = append(methods, r.Method)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client, err := NewS3Client(&config.S3Config{
+		Bucket:    "test-bucket",
+		Endpoint:  server.URL,
+		AccessKey: "test-key",
+		SecretKey: "test-secret",
+	})
+	if err != nil {
+		t.Fatalf("NewS3Client() error: %v", err)
+	}
+	if err := client.CheckConnection(context.Background()); err != nil {
+		t.Fatalf("CheckConnection() error: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(methods) != 1 || methods[0] != http.MethodHead {
+		t.Fatalf("S3 methods = %v, want [HEAD]", methods)
+	}
 }
 
 func TestS3Client_UploadFile(t *testing.T) {

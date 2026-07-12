@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -61,15 +62,15 @@ func (c *Config) ValidatePaths() error {
 		return fmt.Errorf("sql_dir validation failed: %w", err)
 	}
 
-	// Check export directory can be created/written
-	if err := validateDirWritable(c.ExportDir); err != nil {
+	// Check export directory or its nearest existing parent.
+	if err := validateDirTarget(c.ExportDir); err != nil {
 		return fmt.Errorf("export_dir validation failed: %w", err)
 	}
 
-	// Check state file parent directory is writable
-	stateDir := dirPath(c.StateFile)
+	// Check state file parent directory without creating it.
+	stateDir := filepath.Dir(c.StateFile)
 	if stateDir != "." {
-		if err := validateDirWritable(stateDir); err != nil {
+		if err := validateDirTarget(stateDir); err != nil {
 			return fmt.Errorf("state file directory validation failed: %w", err)
 		}
 	}
@@ -102,38 +103,25 @@ func validateDirReadable(path string) error {
 	return nil
 }
 
-// validateDirWritable checks if a directory can be written to
-func validateDirWritable(path string) error {
-	// If directory doesn't exist, try to create it
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		if err := os.MkdirAll(path, 0755); err != nil {
-			return fmt.Errorf("cannot create directory: %w", err)
+// validateDirTarget checks that a path is a directory or can be created below
+// an existing directory. It intentionally performs no writes.
+func validateDirTarget(path string) error {
+	current := filepath.Clean(path)
+	for {
+		info, err := os.Stat(current)
+		if err == nil {
+			if !info.IsDir() {
+				return fmt.Errorf("not a directory: %s", current)
+			}
+			return nil
 		}
-		return nil
-	}
-
-	// Directory exists, check if writable
-	testFile := fmt.Sprintf("%s/.write_test_%d", path, time.Now().UnixNano())
-	f, err := os.Create(testFile)
-	if err != nil {
-		return fmt.Errorf("directory not writable: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("failed to close write test file: %w", err)
-	}
-	if err := os.Remove(testFile); err != nil {
-		return fmt.Errorf("failed to remove write test file: %w", err)
-	}
-
-	return nil
-}
-
-// dirPath returns the directory path of a file path
-func dirPath(path string) string {
-	for i := len(path) - 1; i >= 0; i-- {
-		if path[i] == '/' || path[i] == '\\' {
-			return path[:i]
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to access directory: %w", err)
 		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return fmt.Errorf("no existing parent directory for %s", path)
+		}
+		current = parent
 	}
-	return "."
 }

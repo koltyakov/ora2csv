@@ -300,6 +300,12 @@ func TestConfig_ValidatePaths(t *testing.T) {
 		if err != nil {
 			t.Errorf("ValidatePaths() error = %v", err)
 		}
+		if _, err := os.Stat(exportDir); !os.IsNotExist(err) {
+			t.Error("ValidatePaths() created export directory")
+		}
+		if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
+			t.Error("ValidatePaths() created state directory")
+		}
 	})
 
 	t.Run("sql_dir does not exist", func(t *testing.T) {
@@ -334,6 +340,22 @@ func TestConfig_ValidatePaths(t *testing.T) {
 			t.Error("expected error when sql_dir is a file")
 		}
 	})
+
+	t.Run("export_dir is a file not directory", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		sqlDir := tmpDir + "/sql"
+		exportFile := tmpDir + "/export"
+		if err := os.Mkdir(sqlDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(exportFile, []byte("test"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		cfg := &Config{SQLDir: sqlDir, ExportDir: exportFile, StateFile: tmpDir + "/state.json"}
+		if err := cfg.ValidatePaths(); err == nil {
+			t.Error("expected error when export_dir is a file")
+		}
+	})
 }
 
 func TestValidateDirReadable(t *testing.T) {
@@ -366,53 +388,24 @@ func TestValidateDirReadable(t *testing.T) {
 	})
 }
 
-func TestValidateDirWritable(t *testing.T) {
-	t.Run("existing writable directory", func(t *testing.T) {
+func TestValidateDirTarget(t *testing.T) {
+	t.Run("existing directory", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		err := validateDirWritable(tmpDir)
+		err := validateDirTarget(tmpDir)
 		if err != nil {
-			t.Errorf("validateDirWritable() error = %v", err)
+			t.Errorf("validateDirTarget() error = %v", err)
 		}
 	})
 
-	t.Run("creates new directory", func(t *testing.T) {
+	t.Run("accepts missing directory without creating it", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		newDir := tmpDir + "/new/deep/path"
-		err := validateDirWritable(newDir)
+		err := validateDirTarget(newDir)
 		if err != nil {
-			t.Errorf("validateDirWritable() error = %v", err)
+			t.Errorf("validateDirTarget() error = %v", err)
 		}
-
-		// Verify it was created
-		info, err := os.Stat(newDir)
-		if err != nil {
-			t.Fatalf("Stat() error = %v", err)
-		}
-		if !info.IsDir() {
-			t.Error("Path is not a directory")
+		if _, err := os.Stat(newDir); !os.IsNotExist(err) {
+			t.Error("validateDirTarget() created the directory")
 		}
 	})
-}
-
-func TestDirPath(t *testing.T) {
-	tests := []struct {
-		name     string
-		path     string
-		expected string
-	}{
-		{"unix path", "/home/user/file.json", "/home/user"},
-		{"windows path", `C:\Users\user\file.json`, `C:\Users\user`},
-		{"relative path", "dir/file.json", "dir"},
-		{"no directory", "file.json", "."},
-		{"nested path", "a/b/c/d/file.json", "a/b/c/d"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := dirPath(tt.path)
-			if got != tt.expected {
-				t.Errorf("dirPath() = %q, want %q", got, tt.expected)
-			}
-		})
-	}
 }

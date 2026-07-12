@@ -184,6 +184,22 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Dry run is deliberately local and side-effect free.
+	if cfg.DryRun {
+		logger.Info("Dry run mode - validating local configuration only")
+		st, err := state.Load(cfg.StateFile, nil, "")
+		if err != nil {
+			logger.Error("Failed to load state file: %v", err)
+			return fmt.Errorf("failed to load state file: %w", err)
+		}
+		if err := exporter.Validate(cfg, st, false); err != nil {
+			logger.Error("Validation failed: %v", err)
+			return err
+		}
+		logger.Info("Validation successful")
+		return nil
+	}
+
 	// Initialize S3 client if enabled
 	var s3Client *storage.S3Client
 	var s3StateKey string
@@ -219,15 +235,9 @@ func runExport(cmd *cobra.Command, args []string) error {
 	logger.Info("Loaded state file: %s (%d entities, %d active)",
 		cfg.StateFile, st.TotalCount(), st.ActiveCount())
 
-	// Dry run mode
-	if cfg.DryRun {
-		logger.Info("Dry run mode - validating configuration only")
-		if err := exporter.Validate(cfg, st, false); err != nil {
-			logger.Error("Validation failed: %v", err)
-			return err
-		}
-		logger.Info("Validation successful")
-		return nil
+	if err := exporter.Validate(cfg, st, false); err != nil {
+		logger.Error("Validation failed: %v", err)
+		return err
 	}
 
 	// Ensure export directory exists

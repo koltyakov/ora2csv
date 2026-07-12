@@ -328,6 +328,9 @@ func Validate(cfg *config.Config, st *state.File, testDB bool) error {
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("config validation failed: %w", err)
 	}
+	if err := cfg.ValidatePaths(); err != nil {
+		return fmt.Errorf("path validation failed: %w", err)
+	}
 
 	// Validate SQL files
 	if err := st.ValidateSQLFiles(cfg.SQLDir); err != nil {

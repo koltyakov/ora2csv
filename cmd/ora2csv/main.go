@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -27,67 +28,77 @@ var (
 	buildTime = "unknown"
 )
 
-var rootCmd = &cobra.Command{
-	Use:   "ora2csv",
-	Short: "Oracle to CSV exporter with state management",
-	Long: `ora2csv exports data from Oracle database to CSV files with incremental sync.
-It streams data directly from Oracle to CSV without storing entire exports in memory.`,
-	Version: version,
-}
-
 var errExportFailures = errors.New("one or more entities failed")
 
-var exportCmd = &cobra.Command{
-	Use:           "export",
-	Short:         "Export data from Oracle to CSV",
-	Long:          "Export data from Oracle database to CSV files based on state.json configuration",
-	RunE:          runExport,
-	SilenceUsage:  true,  // Don't print usage on error
-	SilenceErrors: false, // Still print errors
-}
+var rootCmd = newRootCommand(resolvedVersion(), buildTime)
 
-var validateCmd = &cobra.Command{
-	Use:          "validate",
-	Short:        "Validate configuration and SQL files",
-	Long:         "Validate configuration, check SQL files exist, and optionally test database connection",
-	RunE:         runValidate,
-	SilenceUsage: true, // Don't print usage on error
-}
+func newRootCommand(commandVersion, commandBuildTime string) *cobra.Command {
+	root := &cobra.Command{
+		Use:           "ora2csv",
+		Short:         "Oracle to CSV exporter with state management",
+		Long:          "ora2csv exports data from Oracle to CSV files with incremental sync.\nIt streams data directly from Oracle to CSV without storing entire exports in memory.",
+		Version:       fmt.Sprintf("%s (built: %s)", commandVersion, commandBuildTime),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+	}
+	export := &cobra.Command{
+		Use:   "export",
+		Short: "Export data from Oracle to CSV",
+		Long:  "Export data from Oracle database to CSV files based on state.json configuration",
+		Args:  cobra.NoArgs,
+		RunE:  runExport,
+	}
+	validate := &cobra.Command{
+		Use:   "validate",
+		Short: "Validate configuration and SQL files",
+		Long:  "Validate configuration, check SQL files exist, and optionally test database connection",
+		Args:  cobra.NoArgs,
+		RunE:  runValidate,
+	}
 
-func init() {
 	// Common flags
-	rootCmd.PersistentFlags().String("db-host", config.DefaultDBHost, "Database host")
-	rootCmd.PersistentFlags().Int("db-port", config.DefaultDBPort, "Database port")
-	rootCmd.PersistentFlags().String("db-service", config.DefaultDBService, "Database service name")
-	rootCmd.PersistentFlags().String("db-user", config.DefaultDBUser, "Database user")
-	rootCmd.PersistentFlags().String("state-file", config.DefaultStateFile, "Path to state.json file")
-	rootCmd.PersistentFlags().String("sql-dir", config.DefaultSQLDir, "Path to SQL directory")
-	rootCmd.PersistentFlags().String("export-dir", config.DefaultExportDir, "Path to export directory")
-	rootCmd.PersistentFlags().Int("days-back", config.DefaultDaysBack, "Default days to look back for first run")
-	rootCmd.PersistentFlags().Bool("dry-run", false, "Validate without executing")
-	rootCmd.PersistentFlags().Bool("verbose", false, "Enable verbose logging")
-	rootCmd.PersistentFlags().Duration("connect-timeout", config.DefaultConnectTimeoutSecs*time.Second, "Connection timeout")
-	rootCmd.PersistentFlags().Duration("query-timeout", config.DefaultQueryTimeoutSecs*time.Second, "Query timeout")
-	rootCmd.PersistentFlags().Duration("watermark-lag", config.DefaultWatermarkLagSecs*time.Second, "Delay the Oracle watermark to allow recent transactions to commit")
-	rootCmd.PersistentFlags().String("null-value", config.DefaultNullValue, "CSV value used for SQL NULL")
+	root.PersistentFlags().String("db-host", config.DefaultDBHost, "Database host")
+	root.PersistentFlags().Int("db-port", config.DefaultDBPort, "Database port")
+	root.PersistentFlags().String("db-service", config.DefaultDBService, "Database service name")
+	root.PersistentFlags().String("db-user", config.DefaultDBUser, "Database user")
+	root.PersistentFlags().String("state-file", config.DefaultStateFile, "Path to state.json file")
+	root.PersistentFlags().String("sql-dir", config.DefaultSQLDir, "Path to SQL directory")
+	root.PersistentFlags().String("export-dir", config.DefaultExportDir, "Path to export directory")
+	root.PersistentFlags().Int("days-back", config.DefaultDaysBack, "Default days to look back for first run")
+	root.PersistentFlags().Bool("dry-run", false, "Validate without executing")
+	root.PersistentFlags().Bool("verbose", false, "Enable verbose logging")
+	root.PersistentFlags().Duration("connect-timeout", config.DefaultConnectTimeoutSecs*time.Second, "Connection timeout")
+	root.PersistentFlags().Duration("query-timeout", config.DefaultQueryTimeoutSecs*time.Second, "Query timeout")
+	root.PersistentFlags().Duration("watermark-lag", config.DefaultWatermarkLagSecs*time.Second, "Delay the Oracle watermark to allow recent transactions to commit")
+	root.PersistentFlags().String("null-value", config.DefaultNullValue, "CSV value used for SQL NULL")
 
 	// S3 flags
-	rootCmd.PersistentFlags().String("s3-bucket", "", "S3 bucket name")
-	rootCmd.PersistentFlags().String("s3-prefix", "", "S3 key prefix")
-	rootCmd.PersistentFlags().String("s3-access-key", "", "S3 access key (for S3-compatible services)")
-	rootCmd.PersistentFlags().String("s3-secret-key", "", "S3 secret key (for S3-compatible services)")
-	rootCmd.PersistentFlags().String("s3-session-token", "", "S3 session token (for S3-compatible services)")
-	rootCmd.PersistentFlags().String("s3-endpoint", "", "S3 endpoint URL (for S3-compatible services like MinIO)")
+	root.PersistentFlags().String("s3-bucket", "", "S3 bucket name")
+	root.PersistentFlags().String("s3-prefix", "", "S3 key prefix")
+	root.PersistentFlags().String("s3-access-key", "", "S3 access key (for S3-compatible services)")
+	root.PersistentFlags().String("s3-secret-key", "", "S3 secret key (for S3-compatible services)")
+	root.PersistentFlags().String("s3-session-token", "", "S3 session token (for S3-compatible services)")
+	root.PersistentFlags().String("s3-endpoint", "", "S3 endpoint URL (for S3-compatible services like MinIO)")
 
 	// Validate-specific flags
-	validateCmd.Flags().Bool("test-connection", false, "Test database connection")
+	validate.Flags().Bool("test-connection", false, "Test database connection")
+	root.AddCommand(export, validate)
+	return root
+}
+
+func resolvedVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return version
 }
 
 func main() {
-	rootCmd.AddCommand(exportCmd)
-	rootCmd.AddCommand(validateCmd)
-
 	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
 		if errors.Is(err, errExportFailures) {
 			os.Exit(2)
 		}

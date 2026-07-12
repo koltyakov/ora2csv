@@ -1,18 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
 
 func TestRunExport_DryRunHasNoRemoteOrFilesystemSideEffects(t *testing.T) {
-	if exportCmd.Parent() == nil {
-		rootCmd.AddCommand(exportCmd)
-	}
+	root := newRootCommand("test", "test")
 	tmpDir := t.TempDir()
 	statePath := filepath.Join(tmpDir, "state.json")
 	sqlDir := filepath.Join(tmpDir, "sql")
@@ -36,7 +36,7 @@ func TestRunExport_DryRunHasNoRemoteOrFilesystemSideEffects(t *testing.T) {
 	defer server.Close()
 
 	t.Setenv("ORA2CSV_DB_PASSWORD", "test-password")
-	rootCmd.SetArgs([]string{
+	root.SetArgs([]string{
 		"export",
 		"--state-file", statePath,
 		"--sql-dir", sqlDir,
@@ -47,9 +47,7 @@ func TestRunExport_DryRunHasNoRemoteOrFilesystemSideEffects(t *testing.T) {
 		"--s3-access-key", "test-key",
 		"--s3-secret-key", "test-secret",
 	})
-	t.Cleanup(func() { rootCmd.SetArgs(nil) })
-
-	if err := rootCmd.Execute(); err != nil {
+	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute() error: %v", err)
 	}
 	if requests.Load() != 0 {
@@ -67,5 +65,35 @@ func TestRunExport_DryRunHasNoRemoteOrFilesystemSideEffects(t *testing.T) {
 	}
 	if string(after) != string(stateData) {
 		t.Fatalf("dry-run changed state to %q", after)
+	}
+}
+
+func TestCommandsRejectPositionalArguments(t *testing.T) {
+	for _, command := range []string{"export", "validate"} {
+		t.Run(command, func(t *testing.T) {
+			root := newRootCommand("test", "test")
+			root.SetArgs([]string{command, "unexpected"})
+			err := root.Execute()
+			if err == nil || !strings.Contains(err.Error(), "unknown command \"unexpected\"") {
+				t.Fatalf("Execute() error = %v, want positional argument rejection", err)
+			}
+		})
+	}
+}
+
+func TestRootCommandVersion(t *testing.T) {
+	root := newRootCommand("1.2.3", "2026-07-12T10:00:00Z")
+	var stdout, stderr bytes.Buffer
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	root.SetArgs([]string{"--version"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if stdout.String() != "ora2csv version 1.2.3 (built: 2026-07-12T10:00:00Z)\n" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }

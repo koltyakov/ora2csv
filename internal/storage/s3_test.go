@@ -44,6 +44,9 @@ func TestNewS3Client(t *testing.T) {
 		if client == nil {
 			t.Fatal("NewS3Client() returned nil client")
 		}
+		if client.uploader.PartSize != config.DefaultS3PartSize || client.uploader.Concurrency != config.DefaultS3Concurrency {
+			t.Fatalf("uploader settings = (%d, %d)", client.uploader.PartSize, client.uploader.Concurrency)
+		}
 	})
 }
 

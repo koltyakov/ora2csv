@@ -65,6 +65,9 @@ ora2csv export \
 | `--s3-access-key`    | Access key for S3-compatible services          | empty             |
 | `--s3-secret-key`    | Secret key for S3-compatible services          | empty             |
 | `--s3-session-token` | Session token for S3-compatible services       | empty             |
+| `--s3-upload-timeout` | Maximum duration per S3 upload                 | `5m`              |
+| `--s3-part-size`      | Multipart part size in bytes                   | `5242880`         |
+| `--s3-concurrency`    | Multipart upload concurrency                   | `5`               |
 
 ### Environment Variables
 
@@ -258,9 +261,9 @@ The local copy is retained for diagnosis, but an existing S3 state object remain
 
 ### Performance
 
-1. **Multipart upload** is automatic for files larger than 5MB
-2. **Concurrency** of 5 is used for multipart uploads
-3. **Network timeout** is set to 5 minutes per file upload
+1. **Multipart upload** is automatic for files larger than the configured part size
+2. **Concurrency** is configurable with `--s3-concurrency`
+3. **Upload timeout** is configurable with `--s3-upload-timeout`
 4. **Local capacity** must accommodate one completed entity CSV
 
 ### Concurrency

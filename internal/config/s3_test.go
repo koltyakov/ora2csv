@@ -2,6 +2,7 @@ package config
 
 import (
 	"testing"
+	"time"
 )
 
 func TestS3Config_Validate(t *testing.T) {
@@ -19,7 +20,27 @@ func TestS3Config_Validate(t *testing.T) {
 		if err != nil {
 			t.Errorf("Validate() error = %v", err)
 		}
+		if cfg.UploadTimeout != 5*time.Minute || cfg.PartSize != DefaultS3PartSize || cfg.Concurrency != DefaultS3Concurrency {
+			t.Fatalf("defaults = (%v, %d, %d)", cfg.UploadTimeout, cfg.PartSize, cfg.Concurrency)
+		}
 	})
+
+	for _, tt := range []struct {
+		name string
+		cfg  S3Config
+	}{
+		{name: "upload timeout too short", cfg: S3Config{Bucket: "test", UploadTimeout: time.Millisecond}},
+		{name: "upload timeout too long", cfg: S3Config{Bucket: "test", UploadTimeout: 25 * time.Hour}},
+		{name: "part size too small", cfg: S3Config{Bucket: "test", PartSize: DefaultS3PartSize - 1}},
+		{name: "part size too large", cfg: S3Config{Bucket: "test", PartSize: MaxS3PartSize + 1}},
+		{name: "concurrency too large", cfg: S3Config{Bucket: "test", Concurrency: 101}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.cfg.Validate(); err == nil {
+				t.Fatal("Validate() error = nil, want validation error")
+			}
+		})
+	}
 
 	t.Run("normalizes prefix with leading slash", func(t *testing.T) {
 		cfg := &S3Config{

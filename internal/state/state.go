@@ -270,10 +270,7 @@ func (f *File) save(entities []types.EntityState) (newETag *string, remoteCommit
 	}
 
 	if f.s3 != nil && f.s3Key != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		etag, err := f.s3.UploadBytesCAS(ctx, f.s3Key, data, f.s3ETag)
+		etag, err := f.s3.UploadBytesCAS(context.Background(), f.s3Key, data, f.s3ETag)
 		if err != nil {
 			return nil, false, fmt.Errorf("failed to upload state to S3 (key=%s): %w", f.s3Key, err)
 		}

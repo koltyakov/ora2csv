@@ -121,6 +121,9 @@ Flags:
   --s3-bucket string        S3 bucket name (enables S3 storage)
   --s3-prefix string        S3 key prefix
   --s3-endpoint string      S3 endpoint URL for S3-compatible services
+  --s3-upload-timeout duration S3 upload timeout (default 5m)
+  --s3-part-size int        S3 multipart part size in bytes (default 5242880)
+  --s3-concurrency int      S3 multipart upload concurrency (default 5)
   --s3-access-key string    S3 access key (for S3-compatible services)
   --s3-secret-key string    S3 secret key (for S3-compatible services)
   --s3-session-token string S3 session token (for S3-compatible services)

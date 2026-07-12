@@ -38,6 +38,9 @@ func FromCommand(cmd *cobra.Command) (*Config, error) {
 		{"s3-secret-key", "s3_secret_key"},
 		{"s3-session-token", "s3_session_token"},
 		{"s3-endpoint", "s3_endpoint"},
+		{"s3-upload-timeout", "s3_upload_timeout"},
+		{"s3-part-size", "s3_part_size"},
+		{"s3-concurrency", "s3_concurrency"},
 	}
 
 	for _, f := range flags {
@@ -70,6 +73,15 @@ func FromCommand(cmd *cobra.Command) (*Config, error) {
 	if err := v.BindEnv("s3_endpoint", EnvS3Endpoint); err != nil {
 		return nil, fmt.Errorf("failed to bind s3 endpoint env var: %w", err)
 	}
+	if err := v.BindEnv("s3_upload_timeout", EnvS3UploadTimeout); err != nil {
+		return nil, fmt.Errorf("failed to bind S3 upload timeout env var: %w", err)
+	}
+	if err := v.BindEnv("s3_part_size", EnvS3PartSize); err != nil {
+		return nil, fmt.Errorf("failed to bind S3 part size env var: %w", err)
+	}
+	if err := v.BindEnv("s3_concurrency", EnvS3Concurrency); err != nil {
+		return nil, fmt.Errorf("failed to bind S3 concurrency env var: %w", err)
+	}
 
 	// Set defaults from config package
 	v.SetDefault("db_host", DefaultDBHost)
@@ -86,6 +98,9 @@ func FromCommand(cmd *cobra.Command) (*Config, error) {
 	v.SetDefault("query_timeout", DefaultQueryTimeoutSecs*time.Second)
 	v.SetDefault("watermark_lag", DefaultWatermarkLagSecs*time.Second)
 	v.SetDefault("null_value", DefaultNullValue)
+	v.SetDefault("s3_upload_timeout", DefaultS3UploadTimeoutSecs*time.Second)
+	v.SetDefault("s3_part_size", DefaultS3PartSize)
+	v.SetDefault("s3_concurrency", DefaultS3Concurrency)
 
 	// S3 defaults
 	// No defaults - using AWS SDK default region and credential chain
@@ -100,6 +115,7 @@ func FromCommand(cmd *cobra.Command) (*Config, error) {
 	result.ConnectTimeout = v.GetDuration("connect_timeout")
 	result.QueryTimeout = v.GetDuration("query_timeout")
 	result.WatermarkLag = v.GetDuration("watermark_lag")
+	result.S3.UploadTimeout = v.GetDuration("s3_upload_timeout")
 
 	return result, nil
 }

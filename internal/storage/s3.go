@@ -34,6 +34,9 @@ func NewS3Client(cfg *config.S3Config) (*S3Client, error) {
 	if cfg.Bucket == "" {
 		return nil, fmt.Errorf("S3 bucket is required")
 	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 
 	// Build AWS configuration
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -65,10 +68,7 @@ func NewS3Client(cfg *config.S3Config) (*S3Client, error) {
 		})
 
 		// Configure multipart upload with fixed 5MB part size
-		uploader := manager.NewUploader(client, func(u *manager.Uploader) {
-			u.PartSize = 5 * 1024 * 1024 // 5MB
-			u.Concurrency = 5            // Default concurrency for multipart upload
-		})
+		uploader := newUploader(client, cfg)
 
 		return &S3Client{
 			client:   client,
@@ -91,16 +91,20 @@ func NewS3Client(cfg *config.S3Config) (*S3Client, error) {
 	})
 
 	// Configure multipart upload with fixed 5MB part size
-	uploader := manager.NewUploader(client, func(u *manager.Uploader) {
-		u.PartSize = 5 * 1024 * 1024 // 5MB
-		u.Concurrency = 5            // Default concurrency for multipart upload
-	})
+	uploader := newUploader(client, cfg)
 
 	return &S3Client{
 		client:   client,
 		uploader: uploader,
 		cfg:      cfg,
 	}, nil
+}
+
+func newUploader(client *s3.Client, cfg *config.S3Config) *manager.Uploader {
+	return manager.NewUploader(client, func(u *manager.Uploader) {
+		u.PartSize = cfg.PartSize
+		u.Concurrency = cfg.Concurrency
+	})
 }
 
 // UploadFile uploads a local file to S3
@@ -112,13 +116,15 @@ func (s *S3Client) UploadFile(ctx context.Context, key, path string) error {
 
 // UploadStream uploads data from an io.Reader to S3 using multipart upload
 func (s *S3Client) UploadStream(ctx context.Context, key string, r io.Reader) error {
+	uploadCtx, cancel := context.WithTimeout(ctx, s.cfg.UploadTimeout)
+	defer cancel()
 	input := &s3.PutObjectInput{
 		Bucket: aws.String(s.cfg.Bucket),
 		Key:    aws.String(key),
 		Body:   r,
 	}
 
-	_, err := s.uploader.Upload(ctx, input)
+	_, err := s.uploader.Upload(uploadCtx, input)
 	if err != nil {
 		return fmt.Errorf("failed to upload to S3 (key=%s): %w", key, err)
 	}
@@ -242,6 +248,8 @@ func (s *S3Client) UploadBytes(ctx context.Context, key string, data []byte) err
 
 // UploadBytesCAS conditionally replaces a small object and returns its new ETag.
 func (s *S3Client) UploadBytesCAS(ctx context.Context, key string, data []byte, expectedETag *string) (string, error) {
+	uploadCtx, cancel := context.WithTimeout(ctx, s.cfg.UploadTimeout)
+	defer cancel()
 	input := &s3.PutObjectInput{
 		Bucket: aws.String(s.cfg.Bucket),
 		Key:    aws.String(key),
@@ -252,7 +260,7 @@ func (s *S3Client) UploadBytesCAS(ctx context.Context, key string, data []byte, 
 	} else {
 		input.IfMatch = expectedETag
 	}
-	output, err := s.client.PutObject(ctx, input)
+	output, err := s.client.PutObject(uploadCtx, input)
 	if err != nil {
 		if isCASConflict(err) {
 			return "", fmt.Errorf("%w for key %s: %v", ErrCASConflict, key, err)

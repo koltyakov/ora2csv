@@ -79,6 +79,9 @@ func newRootCommand(commandVersion, commandBuildTime string) *cobra.Command {
 	root.PersistentFlags().String("s3-secret-key", "", "S3 secret key (for S3-compatible services)")
 	root.PersistentFlags().String("s3-session-token", "", "S3 session token (for S3-compatible services)")
 	root.PersistentFlags().String("s3-endpoint", "", "S3 endpoint URL (for S3-compatible services like MinIO)")
+	root.PersistentFlags().Duration("s3-upload-timeout", config.DefaultS3UploadTimeoutSecs*time.Second, "S3 upload timeout")
+	root.PersistentFlags().Int64("s3-part-size", config.DefaultS3PartSize, "S3 multipart part size in bytes")
+	root.PersistentFlags().Int("s3-concurrency", config.DefaultS3Concurrency, "S3 multipart upload concurrency")
 
 	// Validate-specific flags
 	validate.Flags().Bool("test-connection", false, "Test database connection")

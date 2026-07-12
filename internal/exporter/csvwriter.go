@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"time"
 )
 
 // CSVWriter handles streaming CSV encoding.
@@ -433,9 +432,6 @@ func (w *S3StreamingCSVWriter) Commit(ctx context.Context) error {
 	}
 	w.finalized = true
 
-	uploadCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-
 	file, err := os.Open(w.localPath)
 	if err != nil {
 		w.commitErr = fmt.Errorf("failed to open file for S3 upload: %w", err)
@@ -447,7 +443,7 @@ func (w *S3StreamingCSVWriter) Commit(ctx context.Context) error {
 		}
 	}()
 
-	if err := w.uploader.UploadStream(uploadCtx, w.s3Key, file); err != nil {
+	if err := w.uploader.UploadStream(ctx, w.s3Key, file); err != nil {
 		// S3 upload failed - keep the local file as fallback
 		w.commitErr = fmt.Errorf("S3 upload failed: %w (local file kept at %s)", err, w.localPath)
 		return w.commitErr

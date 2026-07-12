@@ -176,7 +176,7 @@ func (e *Exporter) processEntity(ctx context.Context, entity types.EntityState, 
 	entityCtx, entityCancel := context.WithTimeout(ctx, e.cfg.QueryTimeout)
 	defer entityCancel()
 
-	rowCount, err := e.executeQueryToCSV(entityCtx, entity.Entity, sqlContent, startDateStr, tillDateStr, outputFile, log)
+	rowCount, err := e.executeQueryToCSV(entityCtx, ctx, entity.Entity, sqlContent, startDateStr, tillDateStr, outputFile, log)
 	if err != nil {
 		log.Error("Failed to execute query: %v", err)
 		return types.EntityResult{
@@ -249,7 +249,7 @@ func (e *Exporter) getOutputPath(entityName, startDate, tillDate string) string 
 }
 
 // executeQueryToCSV executes a query and streams results to CSV
-func (e *Exporter) executeQueryToCSV(ctx context.Context, entityName, sqlContent, startDate, tillDate, outputPath string, log *logging.Logger) (rowCount int, retErr error) {
+func (e *Exporter) executeQueryToCSV(queryCtx, commitCtx context.Context, entityName, sqlContent, startDate, tillDate, outputPath string, log *logging.Logger) (rowCount int, retErr error) {
 	// Prepare query parameters
 	params := map[string]interface{}{
 		"startDate": startDate,
@@ -257,7 +257,7 @@ func (e *Exporter) executeQueryToCSV(ctx context.Context, entityName, sqlContent
 	}
 
 	// Execute query
-	rows, err := e.db.QueryContext(ctx, sqlContent, params)
+	rows, err := e.db.QueryContext(queryCtx, sqlContent, params)
 	if err != nil {
 		return 0, fmt.Errorf("query execution failed: %w", err)
 	}
@@ -343,7 +343,7 @@ func (e *Exporter) executeQueryToCSV(ctx context.Context, entityName, sqlContent
 		return 0, nil
 	}
 
-	if err := writer.Commit(ctx); err != nil {
+	if err := writer.Commit(commitCtx); err != nil {
 		return rowCount, fmt.Errorf("failed to finalize output: %w", err)
 	}
 	return rowCount, nil

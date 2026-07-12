@@ -246,19 +246,19 @@ SQL files should:
 ### Example Output
 
 ```
-[2025-01-14 16:30:00] Starting ora2csv v1.0.0 (built: 2025-01-14T16:00:00Z)
-[2025-01-14 16:30:00] Loaded state file: ./state.json (3 entities, 2 active)
-[2025-01-14 16:30:00] Connecting to database: system@dbserver:1521/ORCL
-[2025-01-14 16:30:01] Database connection established
-[2025-01-14 16:30:01] Using till date for all entities: 2025-01-14T16:30:01
-[2025-01-14 16:30:01] [crm.products] Processing entity: crm.products
-[2025-01-14 16:30:01] [crm.products] Start date: 2025-01-14T00:00:00
-[2025-01-14 16:30:02] [crm.products] Exported 1234 rows to: export/crm.products__2025-01-14T00-00-00.csv
+[2025-01-14T16:30:00Z] [INFO] Starting ora2csv v1.0.0 (built: 2025-01-14T16:00:00Z)
+[2025-01-14T16:30:00Z] [INFO] Loaded state file: ./state.json (3 entities, 2 active)
+[2025-01-14T16:30:00Z] [INFO] Connecting to database: system@dbserver:1521/ORCL
+[2025-01-14T16:30:01Z] [INFO] Database connection established
+[2025-01-14T16:30:01Z] [INFO] Using till date for all entities: 2025-01-14T16:30:01
+[2025-01-14T16:30:01Z] [INFO] [crm.products] Processing entity: crm.products
+[2025-01-14T16:30:01Z] [INFO] [crm.products] Start date: 2025-01-14T00:00:00
+[2025-01-14T16:30:02Z] [INFO] [crm.products] Exported 1234 rows to: export/crm.products__2025-01-14T00-00-00.csv
 ==================================================
-[2025-01-14 16:30:02] Export completed successfully
-[2025-01-14 16:30:02] Total duration: 0m 1s
-[2025-01-14 16:30:02] Successfully processed: 2
-[2025-01-14 16:30:02] Skipped (inactive): 1
+[2025-01-14T16:30:02Z] [INFO] Export completed successfully
+[2025-01-14T16:30:02Z] [INFO] Total duration: 0m 1s
+[2025-01-14T16:30:02Z] [INFO] Successfully processed: 2
+[2025-01-14T16:30:02Z] [INFO] Skipped (inactive): 1
 ==================================================
 ```
 

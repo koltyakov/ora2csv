@@ -2,20 +2,35 @@ package logging
 
 import (
 	"bytes"
-	"log"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func newBufferLogger(level Level) (*Logger, *bytes.Buffer) {
 	buf := &bytes.Buffer{}
 	return &Logger{
 		mu:     &sync.Mutex{},
-		writer: buf,
+		stdout: buf,
+		stderr: buf,
 		level:  level,
-		std:    log.New(buf, "", 0),
+		now:    time.Now,
 	}, buf
+}
+
+func newSplitBufferLogger(level Level) (*Logger, *bytes.Buffer, *bytes.Buffer) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	return &Logger{
+		mu:     &sync.Mutex{},
+		stdout: stdout,
+		stderr: stderr,
+		level:  level,
+		now: func() time.Time {
+			return time.Date(2026, 7, 12, 12, 34, 56, 0, time.FixedZone("CEST", 2*60*60))
+		},
+	}, stdout, stderr
 }
 
 func TestNew(t *testing.T) {
@@ -217,23 +232,32 @@ func TestLogger_LogWithPrefix(t *testing.T) {
 }
 
 func TestLogger_FormatTimestamp(t *testing.T) {
-	logger := New(false)
+	logger, _, _ := newSplitBufferLogger(LevelInfo)
 	ts := logger.formatTimestamp()
+	if ts != "2026-07-12T10:34:56Z" {
+		t.Errorf("timestamp = %q, want UTC RFC3339", ts)
+	}
+}
 
-	// Check format is roughly YYYY-MM-DD HH:MM:SS
-	if len(ts) < 19 {
-		t.Errorf("timestamp too short: %q", ts)
+func TestLogger_RoutesLevelsAndUsesUTC(t *testing.T) {
+	logger, stdout, stderr := newSplitBufferLogger(LevelDebug)
+	logger.Info("information")
+	logger.Debug("details")
+	logger.Error("failure")
+
+	if stdout.String() != "[2026-07-12T10:34:56Z] [INFO] information\n[2026-07-12T10:34:56Z] [DEBUG] details\n" {
+		t.Fatalf("stdout = %q", stdout.String())
 	}
-	if !strings.Contains(ts, " ") {
-		t.Errorf("timestamp does not contain space separator: %q", ts)
+	if stderr.String() != "[2026-07-12T10:34:56Z] [ERROR] failure\n" {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
-	// Should contain date separator
-	if !strings.Contains(ts, "-") {
-		t.Errorf("timestamp does not contain date separator: %q", ts)
-	}
-	// Should contain time separator
-	if !strings.Contains(ts, ":") {
-		t.Errorf("timestamp does not contain time separator: %q", ts)
+}
+
+func TestLogger_PrefixOutput(t *testing.T) {
+	logger, stdout, _ := newSplitBufferLogger(LevelInfo)
+	logger.WithEntity("crm.orders").Info("exported %d row", 1)
+	if stdout.String() != "[2026-07-12T10:34:56Z] [INFO] [crm.orders] exported 1 row\n" {
+		t.Fatalf("stdout = %q", stdout.String())
 	}
 }
 

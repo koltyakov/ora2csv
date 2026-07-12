@@ -21,11 +21,12 @@ const (
 // Logger provides thread-safe logging with timestamps
 type Logger struct {
 	mu     *sync.Mutex
-	writer io.Writer
+	stdout io.Writer
+	stderr io.Writer
 	level  Level
 	file   *os.File
 	prefix string
-	std    *log.Logger
+	now    func() time.Time
 }
 
 // New creates a new Logger
@@ -34,25 +35,21 @@ func New(verbose bool) *Logger {
 	if verbose {
 		level = LevelDebug
 	}
-	writer := os.Stdout
-
 	return &Logger{
 		mu:     &sync.Mutex{},
-		writer: writer,
+		stdout: os.Stdout,
+		stderr: os.Stderr,
 		level:  level,
-		std:    log.New(writer, "", 0),
+		now:    time.Now,
 	}
 }
 
 // NewWithFile creates a new Logger that writes to both file and stdout
 func NewWithFile(path string, verbose bool) (*Logger, error) {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open log file: %w", err)
 	}
-
-	// Multi-writer for both file and stdout
-	multiWriter := io.MultiWriter(os.Stdout, file)
 
 	level := LevelInfo
 	if verbose {
@@ -61,17 +58,22 @@ func NewWithFile(path string, verbose bool) (*Logger, error) {
 
 	return &Logger{
 		mu:     &sync.Mutex{},
-		writer: multiWriter,
+		stdout: io.MultiWriter(os.Stdout, file),
+		stderr: io.MultiWriter(os.Stderr, file),
 		level:  level,
 		file:   file,
-		std:    log.New(multiWriter, "", 0),
+		now:    time.Now,
 	}, nil
 }
 
 // Close closes the log file if open
 func (l *Logger) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.file != nil {
-		return l.file.Close()
+		err := l.file.Close()
+		l.file = nil
+		return err
 	}
 	return nil
 }
@@ -85,7 +87,7 @@ func (l *Logger) SetPrefix(prefix string) {
 
 // formatTimestamp returns a formatted timestamp
 func (l *Logger) formatTimestamp() string {
-	return time.Now().Format("2006-01-02 15:04:05")
+	return l.now().UTC().Format(time.RFC3339)
 }
 
 // log writes a log message with the given level
@@ -106,7 +108,22 @@ func (l *Logger) log(level Level, format string, args ...interface{}) {
 	}
 
 	msg := fmt.Sprintf(format, args...)
-	l.std.Printf("[%s] %s%s\n", l.formatTimestamp(), prefix, msg)
+	writer := l.stdout
+	if level == LevelError {
+		writer = l.stderr
+	}
+	fmt.Fprintf(writer, "[%s] [%s] %s%s\n", l.formatTimestamp(), level.String(), prefix, msg)
+}
+
+func (l Level) String() string {
+	switch l {
+	case LevelError:
+		return "ERROR"
+	case LevelDebug:
+		return "DEBUG"
+	default:
+		return "INFO"
+	}
 }
 
 // Info logs an info message
@@ -128,11 +145,12 @@ func (l *Logger) Debug(format string, args ...interface{}) {
 func (l *Logger) WithPrefix(prefix string) *Logger {
 	return &Logger{
 		mu:     l.mu,
-		writer: l.writer,
+		stdout: l.stdout,
+		stderr: l.stderr,
 		level:  l.level,
 		file:   l.file,
 		prefix: prefix,
-		std:    l.std,
+		now:    l.now,
 	}
 }
 
@@ -143,5 +161,5 @@ func (l *Logger) WithEntity(entity string) *Logger {
 
 // StdLogger returns a standard library logger
 func (l *Logger) StdLogger() *log.Logger {
-	return log.New(l.writer, "", 0)
+	return log.New(l.stdout, "", 0)
 }

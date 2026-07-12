@@ -199,7 +199,7 @@ ora2csv validate --test-connection
    - `:tillDate` = Oracle UTC timestamp minus `--watermark-lag`
    - `:startDate` = Previous `lastRunTime` (or 30 days ago for first run)
 3. **Execute SQL**: For each active entity, execute `sql/<entity>.sql` with bind variables
-4. **Stream to CSV**: Write results directly to `<entity>__<startDate>.csv`
+4. **Stream to CSV**: Write results to `<entity>__<startDate>__<tillDate>.csv`
 5. **Update State**: On success, update `lastRunTime` to current timestamp
 6. **Continue**: Process remaining entities even if some fail
 
@@ -232,7 +232,7 @@ SQL files should:
 
 ### CSV Files
 
-- Location: `export/<entity>__<startDate>.csv`
+- Location: `export/<entity>__<startDate>__<tillDate>.csv`
 - Format: CSV escaping provided by Go's `encoding/csv`, with LF record endings
 - NULL values: Empty fields by default; configurable with `--null-value` (for example, `\N`)
 - Encoding: UTF-8
@@ -253,7 +253,7 @@ SQL files should:
 [2025-01-14T16:30:01Z] [INFO] Using till date for all entities: 2025-01-14T16:30:01
 [2025-01-14T16:30:01Z] [INFO] [crm.products] Processing entity: crm.products
 [2025-01-14T16:30:01Z] [INFO] [crm.products] Start date: 2025-01-14T00:00:00
-[2025-01-14T16:30:02Z] [INFO] [crm.products] Exported 1234 rows to: export/crm.products__2025-01-14T00-00-00.csv
+[2025-01-14T16:30:02Z] [INFO] [crm.products] Exported 1234 rows to: export/crm.products__2025-01-14T00-00-00__2025-01-14T16-30-01.csv
 ==================================================
 [2025-01-14T16:30:02Z] [INFO] Export completed successfully
 [2025-01-14T16:30:02Z] [INFO] Total duration: 0m 1s

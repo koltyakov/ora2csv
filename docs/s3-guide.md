@@ -92,10 +92,10 @@ s3://bucket-name/
 └── [prefix/]                     # Optional prefix
     ├── state.json                # State file (synced)
     ├── entity1/
-    │   ├── entity1__2025-01-14T00-00-00.csv
-    │   └── entity1__2025-01-15T00-00-00.csv
+    │   ├── entity1__2025-01-14T00-00-00__2025-01-15T00-00-00.csv
+    │   └── entity1__2025-01-15T00-00-00__2025-01-16T00-00-00.csv
     ├── entity2/
-    │   └── entity2__2025-01-14T00-00-00.csv
+    │   └── entity2__2025-01-14T00-00-00__2025-01-15T00-00-00.csv
     └── ...
 ```
 
@@ -232,7 +232,7 @@ If a CSV upload fails, that entity fails, its completed local CSV is retained, a
 
 ```
 [2026-01-14 16:30:00] [entity] S3 upload failed: operation error S3: PutObject...
-Error: entity entity1 failed: S3 upload failed: ... (local file kept at /path/to/export/entity__2025-01-14T00-00-00.csv)
+Error: entity entity1 failed: S3 upload failed: ... (local file kept at /path/to/export/entity__2025-01-14T00-00-00__2025-01-15T00-00-00.csv)
 ```
 
 The local CSV file is preserved as a fallback. Fix the S3 credentials or connectivity issue, then retry.

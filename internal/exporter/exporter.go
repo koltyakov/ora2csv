@@ -150,7 +150,7 @@ func (e *Exporter) processEntity(ctx context.Context, entity types.EntityState, 
 	}
 
 	// Generate output filename
-	outputFile := e.getOutputPath(entity.Entity, startDateStr)
+	outputFile := e.getOutputPath(entity.Entity, startDateStr, tillDateStr)
 	log.Info("Output file: %s", outputFile)
 
 	// Create export directory
@@ -232,10 +232,11 @@ func (e *Exporter) loadSQLFile(entityName string) (string, error) {
 }
 
 // getOutputPath generates the output file path for an entity
-func (e *Exporter) getOutputPath(entityName, startDate string) string {
+func (e *Exporter) getOutputPath(entityName, startDate, tillDate string) string {
 	// Replace colons with dashes for filename (matches bash script)
-	safeDate := strings.ReplaceAll(startDate, ":", "-")
-	filename := fmt.Sprintf("%s__%s.csv", entityName, safeDate)
+	safeStartDate := strings.ReplaceAll(startDate, ":", "-")
+	safeTillDate := strings.ReplaceAll(tillDate, ":", "-")
+	filename := fmt.Sprintf("%s__%s__%s.csv", entityName, safeStartDate, safeTillDate)
 	return filepath.Join(e.cfg.ExportDir, filename)
 }
 
@@ -272,8 +273,9 @@ func (e *Exporter) executeQueryToCSV(ctx context.Context, entityName, sqlContent
 	var writer csvWriter
 	if e.s3 != nil && e.cfg.S3.Bucket != "" {
 		// Generate S3 key from output path
-		safeDate := strings.ReplaceAll(startDate, ":", "-")
-		s3Key := e.cfg.S3.Key(fmt.Sprintf("%s/%s__%s.csv", entityName, entityName, safeDate))
+		safeStartDate := strings.ReplaceAll(startDate, ":", "-")
+		safeTillDate := strings.ReplaceAll(tillDate, ":", "-")
+		s3Key := e.cfg.S3.Key(fmt.Sprintf("%s/%s__%s__%s.csv", entityName, entityName, safeStartDate, safeTillDate))
 
 		log.Info("Streaming to S3: %s", s3Key)
 

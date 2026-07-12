@@ -148,7 +148,7 @@ func TestExporterRun_CommitsOutputAndState(t *testing.T) {
 	if result.SuccessCount != 1 || result.Results[0].RowCount != 1 {
 		t.Fatalf("result = %+v", result)
 	}
-	outputPath := filepath.Join(exportDir, "crm.orders__2025-01-01T00-00-00.csv")
+	outputPath := filepath.Join(exportDir, "crm.orders__2025-01-01T00-00-00__2025-01-02T00-00-00.csv")
 	data, err := os.ReadFile(outputPath)
 	if err != nil {
 		t.Fatalf("ReadFile(output) error: %v", err)
@@ -173,7 +173,7 @@ func TestExporterRun_AbortPreservesExistingOutput(t *testing.T) {
 	rows := db.NewMockRowScanner([]string{"id"}, [][]string{{"1"}})
 	rows.ScanErr = errors.New("scan failed")
 	exp, statePath, exportDir := newTestExporter(t, rows)
-	outputPath := filepath.Join(exportDir, "crm.orders__2025-01-01T00-00-00.csv")
+	outputPath := filepath.Join(exportDir, "crm.orders__2025-01-01T00-00-00__2025-01-02T00-00-00.csv")
 	if err := os.WriteFile(outputPath, []byte("existing\n"), 0600); err != nil {
 		t.Fatalf("WriteFile(existing output) error: %v", err)
 	}

@@ -207,8 +207,22 @@ func (f *File) FindEntity(name string) (*types.EntityState, bool) {
 
 // UpdateEntityTimestamp updates the lastRunTime for an entity
 func (f *File) UpdateEntityTimestamp(entityName string, timestamp string) error {
+	parsed, err := time.ParseInLocation("2006-01-02T15:04:05", timestamp, time.UTC)
+	if err != nil {
+		return fmt.Errorf("invalid timestamp for entity %s: %w", entityName, err)
+	}
+	_, err = f.AdvanceEntityTimestamp(entityName, parsed)
+	return err
+}
+
+// AdvanceEntityTimestamp persists a timestamp only when it moves state forward.
+func (f *File) AdvanceEntityTimestamp(entityName string, timestamp time.Time) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if timestamp.IsZero() {
+		return false, fmt.Errorf("timestamp for entity %s must not be zero", entityName)
+	}
+	timestamp = timestamp.UTC().Truncate(time.Second)
 
 	candidate := make([]types.EntityState, len(f.entities))
 	copy(candidate, f.entities)
@@ -216,24 +230,28 @@ func (f *File) UpdateEntityTimestamp(entityName string, timestamp string) error 
 	found := false
 	for i := range candidate {
 		if candidate[i].Entity == entityName {
-			candidate[i].LastRunTime = timestamp
-			if _, err := candidate[i].GetLastRunTime(); err != nil {
-				return fmt.Errorf("invalid timestamp for entity %s: %w", entityName, err)
+			current, err := candidate[i].GetLastRunTime()
+			if err != nil {
+				return false, fmt.Errorf("invalid current timestamp for entity %s: %w", entityName, err)
 			}
+			if !timestamp.After(current) {
+				return false, nil
+			}
+			candidate[i].SetLastRunTime(timestamp)
 			found = true
 			break
 		}
 	}
 
 	if !found {
-		return fmt.Errorf("entity not found: %s", entityName)
+		return false, fmt.Errorf("entity not found: %s", entityName)
 	}
 
 	if err := f.save(candidate); err != nil {
-		return err
+		return false, err
 	}
 	f.entities = candidate
-	return nil
+	return true, nil
 }
 
 // save writes the state to disk atomically and uploads to S3 if configured

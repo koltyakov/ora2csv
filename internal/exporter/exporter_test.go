@@ -38,6 +38,9 @@ func newTestExporter(t *testing.T, rows db.RowScanner) (*Exporter, string, strin
 		t.Fatalf("state.Load() error: %v", err)
 	}
 	database := db.NewMockDB()
+	database.CurrentUTCFunc = func(ctx context.Context) (time.Time, error) {
+		return time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC), nil
+	}
 	database.QueryFunc = func(ctx context.Context, query string, args map[string]interface{}) (db.RowScanner, error) {
 		return rows, nil
 	}
@@ -48,6 +51,90 @@ func newTestExporter(t *testing.T, rows db.RowScanner) (*Exporter, string, strin
 		QueryTimeout: time.Minute,
 	}
 	return New(cfg, database, st, logging.New(false), nil), statePath, exportDir
+}
+
+func TestExporterRun_UsesLaggedOracleWatermark(t *testing.T) {
+	rows := db.NewMockRowScanner([]string{"id"}, [][]string{{"1"}})
+	exp, _, _ := newTestExporter(t, rows)
+	database := exp.db.(*db.MockDB)
+	currentCalls := 0
+	database.CurrentUTCFunc = func(ctx context.Context) (time.Time, error) {
+		currentCalls++
+		return time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC), nil
+	}
+	var tillDate any
+	database.QueryFunc = func(ctx context.Context, query string, args map[string]interface{}) (db.RowScanner, error) {
+		tillDate = args["tillDate"]
+		return rows, nil
+	}
+	exp.cfg.WatermarkLag = 5 * time.Minute
+
+	if _, err := exp.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if currentCalls != 1 {
+		t.Fatalf("CurrentUTC() calls = %d, want 1", currentCalls)
+	}
+	if tillDate != "2025-01-01T23:55:00" {
+		t.Fatalf("tillDate = %v, want 2025-01-01T23:55:00", tillDate)
+	}
+}
+
+func TestExporterRun_WatermarkFailureStopsBeforeQuery(t *testing.T) {
+	rows := db.NewMockRowScanner([]string{"id"}, [][]string{{"1"}})
+	exp, _, _ := newTestExporter(t, rows)
+	database := exp.db.(*db.MockDB)
+	database.CurrentUTCFunc = func(ctx context.Context) (time.Time, error) {
+		return time.Time{}, errors.New("clock unavailable")
+	}
+	queryCalled := false
+	database.QueryFunc = func(ctx context.Context, query string, args map[string]interface{}) (db.RowScanner, error) {
+		queryCalled = true
+		return rows, nil
+	}
+
+	if _, err := exp.Run(context.Background()); err == nil {
+		t.Fatal("Run() error = nil, want watermark error")
+	}
+	if queryCalled {
+		t.Fatal("entity query ran after watermark failure")
+	}
+}
+
+func TestExporterRun_NoForwardWindowSkipsQuery(t *testing.T) {
+	rows := db.NewMockRowScanner([]string{"id"}, [][]string{{"1"}})
+	exp, statePath, exportDir := newTestExporter(t, rows)
+	database := exp.db.(*db.MockDB)
+	database.CurrentUTCFunc = func(ctx context.Context) (time.Time, error) {
+		return time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), nil
+	}
+	queryCalled := false
+	database.QueryFunc = func(ctx context.Context, query string, args map[string]interface{}) (db.RowScanner, error) {
+		queryCalled = true
+		return rows, nil
+	}
+
+	result, err := exp.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if queryCalled {
+		t.Fatal("entity query ran for an empty forward window")
+	}
+	if result.SuccessCount != 1 || result.Results[0].RowCount != 0 {
+		t.Fatalf("result = %+v", result)
+	}
+	stateData, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("ReadFile(state) error: %v", err)
+	}
+	if !strings.Contains(string(stateData), "2025-01-01T00:00:00") {
+		t.Fatal("state regressed for empty forward window")
+	}
+	entries, err := os.ReadDir(exportDir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("output entries = %v, error = %v", entries, err)
+	}
 }
 
 func TestExporterRun_CommitsOutputAndState(t *testing.T) {

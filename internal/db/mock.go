@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 // MockDB is a mock implementation of the DB interface for testing
@@ -14,6 +15,8 @@ type MockDB struct {
 	QueryFunc func(ctx context.Context, query string, args map[string]interface{}) (RowScanner, error)
 	// PingFunc is called when Ping is invoked
 	PingFunc func(ctx context.Context) error
+	// CurrentUTCFunc is called when CurrentUTC is invoked
+	CurrentUTCFunc func(ctx context.Context) (time.Time, error)
 	// Closed tracks if Close was called
 	Closed bool
 }
@@ -30,7 +33,18 @@ func NewMockDB() *MockDB {
 		PingFunc: func(ctx context.Context) error {
 			return nil
 		},
+		CurrentUTCFunc: func(ctx context.Context) (time.Time, error) {
+			return time.Now().UTC(), nil
+		},
 	}
+}
+
+// CurrentUTC returns the configured mock Oracle time.
+func (m *MockDB) CurrentUTC(ctx context.Context) (time.Time, error) {
+	if m.CurrentUTCFunc != nil {
+		return m.CurrentUTCFunc(ctx)
+	}
+	return time.Time{}, fmt.Errorf("current UTC time not configured")
 }
 
 // Close closes the mock database

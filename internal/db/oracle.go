@@ -13,6 +13,7 @@ import (
 type DB interface {
 	Close() error
 	QueryContext(ctx context.Context, query string, args map[string]interface{}) (RowScanner, error)
+	CurrentUTC(ctx context.Context) (time.Time, error)
 	Ping(ctx context.Context) error
 }
 
@@ -84,6 +85,20 @@ func (o *OracleDB) QueryContext(ctx context.Context, query string, args map[stri
 	// go-ora v2 supports named parameters using :param syntax
 	// We need to convert the args map to the format expected by go-ora
 	return o.conn.QueryContext(ctx, query, argsToSlice(args)...)
+}
+
+// CurrentUTC returns the current Oracle server time normalized to UTC.
+func (o *OracleDB) CurrentUTC(ctx context.Context) (time.Time, error) {
+	const query = `SELECT TO_CHAR(SYS_EXTRACT_UTC(SYSTIMESTAMP), 'YYYY-MM-DD"T"HH24:MI:SS') FROM DUAL`
+	var value string
+	if err := o.conn.QueryRowContext(ctx, query).Scan(&value); err != nil {
+		return time.Time{}, fmt.Errorf("query Oracle UTC time: %w", err)
+	}
+	result, err := time.ParseInLocation("2006-01-02T15:04:05", value, time.UTC)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse Oracle UTC time %q: %w", value, err)
+	}
+	return result, nil
 }
 
 // Ping checks if the database connection is alive

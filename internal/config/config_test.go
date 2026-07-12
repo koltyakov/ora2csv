@@ -276,6 +276,14 @@ func TestConfig_Validate(t *testing.T) {
 			t.Errorf("Validate() error = %v (0 should be valid)", err)
 		}
 	})
+
+	t.Run("negative watermark lag", func(t *testing.T) {
+		cfg := *validCfg
+		cfg.WatermarkLag = -time.Second
+		if err := cfg.Validate(); err == nil {
+			t.Error("expected error for negative watermark lag")
+		}
+	})
 }
 
 func TestConfig_ValidatePaths(t *testing.T) {

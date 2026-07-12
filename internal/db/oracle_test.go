@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestNew(t *testing.T) {
@@ -80,6 +81,21 @@ func TestMockDB(t *testing.T) {
 			t.Error("expected error when QueryFunc not configured, got nil")
 		}
 	})
+}
+
+func TestMockDB_CurrentUTC(t *testing.T) {
+	want := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+	mock := NewMockDB()
+	mock.CurrentUTCFunc = func(ctx context.Context) (time.Time, error) {
+		return want, nil
+	}
+	got, err := mock.CurrentUTC(context.Background())
+	if err != nil {
+		t.Fatalf("CurrentUTC() error: %v", err)
+	}
+	if !got.Equal(want) {
+		t.Fatalf("CurrentUTC() = %v, want %v", got, want)
+	}
 }
 
 func TestMockRowScanner(t *testing.T) {

@@ -47,12 +47,29 @@ func (e *Exporter) Run(ctx context.Context) (*types.ExportResult, error) {
 	e.logger.Info("Starting data export process")
 	e.logger.Info("Total entities: %d, Active: %d", e.st.TotalCount(), e.st.ActiveCount())
 
-	// Capture till date once for all entities (use UTC to avoid timezone issues)
-	tillDateStr := time.Now().UTC().Format("2006-01-02T15:04:05")
+	activeEntities := e.st.GetActiveEntities()
+	if len(activeEntities) == 0 {
+		result.TotalEntities = e.st.TotalCount()
+		result.SkippedCount = result.TotalEntities
+		result.Duration = time.Since(startTime)
+		return result, nil
+	}
+
+	watermarkCtx, watermarkCancel := context.WithTimeout(ctx, e.cfg.QueryTimeout)
+	oracleNow, err := e.db.CurrentUTC(watermarkCtx)
+	watermarkCancel()
+	if err != nil {
+		result.TotalEntities = e.st.TotalCount()
+		result.SkippedCount = result.TotalEntities
+		result.Duration = time.Since(startTime)
+		return result, fmt.Errorf("failed to obtain Oracle UTC watermark: %w", err)
+	}
+	tillDate := oracleNow.Add(-e.cfg.WatermarkLag).UTC().Truncate(time.Second)
+	tillDateStr := tillDate.Format("2006-01-02T15:04:05")
 	e.logger.Info("Using till date for all entities: %s", tillDateStr)
 
 	// Process each active entity
-	for _, entity := range e.st.GetActiveEntities() {
+	for _, entity := range activeEntities {
 		if err := ctx.Err(); err != nil {
 			result.TotalEntities = e.st.TotalCount()
 			result.SkippedCount = result.TotalEntities - result.ProcessedCount
@@ -60,11 +77,11 @@ func (e *Exporter) Run(ctx context.Context) (*types.ExportResult, error) {
 			return result, fmt.Errorf("export interrupted: %w", err)
 		}
 
-		entityResult := e.processEntity(ctx, entity, tillDateStr)
+		entityResult := e.processEntity(ctx, entity, tillDate)
 
 		// Update state only on success
 		if entityResult.Success {
-			if err := e.st.UpdateEntityTimestamp(entity.Entity, tillDateStr); err != nil {
+			if _, err := e.st.AdvanceEntityTimestamp(entity.Entity, tillDate); err != nil {
 				e.logger.Error("Failed to update state for %s: %v", entity.Entity, err)
 				entityResult.Success = false
 				entityResult.Error = fmt.Errorf("failed to update state for %s: %w", entity.Entity, err)
@@ -89,14 +106,14 @@ func (e *Exporter) Run(ctx context.Context) (*types.ExportResult, error) {
 }
 
 // processEntity handles the export of a single entity
-func (e *Exporter) processEntity(ctx context.Context, entity types.EntityState, tillDateStr string) types.EntityResult {
+func (e *Exporter) processEntity(ctx context.Context, entity types.EntityState, tillDate time.Time) types.EntityResult {
 	startTime := time.Now()
 	log := e.logger.WithEntity(entity.Entity)
 
 	log.Info("Processing entity: %s (active: %t)", entity.Entity, entity.Active)
 
 	// Determine start date
-	startDate, err := e.getStartDate(entity)
+	startDate, err := e.getStartDate(entity, tillDate)
 	if err != nil {
 		log.Error("Failed to determine start date: %v", err)
 		return types.EntityResult{
@@ -107,8 +124,18 @@ func (e *Exporter) processEntity(ctx context.Context, entity types.EntityState, 
 		}
 	}
 	startDateStr := startDate.Format("2006-01-02T15:04:05")
+	tillDateStr := tillDate.Format("2006-01-02T15:04:05")
 
 	log.Info("Start date: %s", startDateStr)
+	if !tillDate.After(startDate) {
+		log.Info("No forward export window available; skipping query")
+		return types.EntityResult{
+			Entity:   entity.Entity,
+			Success:  true,
+			RowCount: 0,
+			Duration: time.Since(startTime),
+		}
+	}
 
 	// Load SQL file
 	sqlContent, err := e.loadSQLFile(entity.Entity)
@@ -175,7 +202,7 @@ func (e *Exporter) processEntity(ctx context.Context, entity types.EntityState, 
 }
 
 // getStartDate determines the start date for an entity
-func (e *Exporter) getStartDate(entity types.EntityState) (time.Time, error) {
+func (e *Exporter) getStartDate(entity types.EntityState, tillDate time.Time) (time.Time, error) {
 	lastRunTime, err := entity.GetLastRunTime()
 	if err != nil {
 		return time.Time{}, fmt.Errorf("failed to parse lastRunTime: %w", err)
@@ -183,7 +210,7 @@ func (e *Exporter) getStartDate(entity types.EntityState) (time.Time, error) {
 
 	// If no last run time, use default days back (UTC to avoid timezone issues)
 	if lastRunTime.IsZero() {
-		return time.Now().UTC().AddDate(0, 0, -e.cfg.DefaultDaysBack), nil
+		return tillDate.AddDate(0, 0, -e.cfg.DefaultDaysBack), nil
 	}
 
 	return lastRunTime, nil

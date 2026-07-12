@@ -60,6 +60,8 @@ Direct Oracle-to-CSV streaming avoids memory spikes for large exports. The `--da
 
 Timestamp extraction must account for transactions that commit after an export snapshot. Use an overlap window with downstream deduplication, or an Oracle SCN/CDC design, when missed late commits are unacceptable. Timestamp queries also do not represent hard deletes.
 
+`--watermark-lag` can delay the Oracle-derived upper bound to reduce exposure to recent uncommitted transactions. It does not replace overlap/deduplication or CDC for transactions longer than the configured lag.
+
 ## Typical Workflow
 
 ### Hourly Incremental Export

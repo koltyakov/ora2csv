@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 type fakeRemoteStore struct {
@@ -433,6 +435,67 @@ func TestUpdateEntityTimestamp_LocalFailureDoesNotMutateMemory(t *testing.T) {
 	entity, _ := st.FindEntity("test.entity")
 	if entity.LastRunTime != "2025-01-01T00:00:00" {
 		t.Fatalf("failed update changed memory to %q", entity.LastRunTime)
+	}
+}
+
+func TestAdvanceEntityTimestamp_IsMonotonic(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+	mustWriteFile(t, statePath, `[{"entity":"test.entity","lastRunTime":"2025-01-02T00:00:00","active":true}]`)
+	remote := &fakeRemoteStore{}
+	st, err := Load(statePath, remote, "state.json")
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	for _, candidate := range []time.Time{
+		time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC),
+		time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+	} {
+		advanced, err := st.AdvanceEntityTimestamp("test.entity", candidate)
+		if err != nil {
+			t.Fatalf("AdvanceEntityTimestamp() error: %v", err)
+		}
+		if advanced {
+			t.Fatalf("AdvanceEntityTimestamp(%v) advanced state", candidate)
+		}
+	}
+	if remote.uploaded != nil {
+		t.Fatal("non-forward updates uploaded state")
+	}
+	entity, _ := st.FindEntity("test.entity")
+	if entity.LastRunTime != "2025-01-02T00:00:00" {
+		t.Fatalf("lastRunTime = %q", entity.LastRunTime)
+	}
+}
+
+func TestAdvanceEntityTimestamp_ConcurrentUpdatesKeepMaximum(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+	mustWriteFile(t, statePath, `[{"entity":"test.entity","lastRunTime":"2025-01-01T00:00:00","active":true}]`)
+	st, err := Load(statePath, nil, "")
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	candidates := []time.Time{
+		time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC),
+		time.Date(2025, 1, 3, 0, 0, 0, 0, time.UTC),
+	}
+	var wg sync.WaitGroup
+	for _, candidate := range candidates {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := st.AdvanceEntityTimestamp("test.entity", candidate); err != nil {
+				t.Errorf("AdvanceEntityTimestamp() error: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	entity, _ := st.FindEntity("test.entity")
+	if entity.LastRunTime != "2025-01-03T00:00:00" {
+		t.Fatalf("lastRunTime = %q, want maximum candidate", entity.LastRunTime)
 	}
 }
 

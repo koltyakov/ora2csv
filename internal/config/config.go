@@ -24,9 +24,10 @@ type Config struct {
 	ExportDir string `mapstructure:"export_dir"`
 
 	// Behavior
-	DefaultDaysBack int  `mapstructure:"days_back"`
-	DryRun          bool `mapstructure:"dry_run"`
-	Verbose         bool `mapstructure:"verbose"`
+	DefaultDaysBack int           `mapstructure:"days_back"`
+	DryRun          bool          `mapstructure:"dry_run"`
+	Verbose         bool          `mapstructure:"verbose"`
+	WatermarkLag    time.Duration `mapstructure:"-"`
 
 	// Timeouts
 	ConnectTimeout time.Duration `mapstructure:"-"`

@@ -29,6 +29,7 @@ func FromCommand(cmd *cobra.Command) (*Config, error) {
 		{"verbose", "verbose"},
 		{"connect-timeout", "connect_timeout"},
 		{"query-timeout", "query_timeout"},
+		{"watermark-lag", "watermark_lag"},
 		// S3 flags (note: auth flags kept for non-AWS S3-compatible services)
 		{"s3-bucket", "s3_bucket"},
 		{"s3-prefix", "s3_prefix"},
@@ -50,6 +51,9 @@ func FromCommand(cmd *cobra.Command) (*Config, error) {
 	v.AutomaticEnv()
 	if err := v.BindEnv("db_password", EnvDBPassword); err != nil {
 		return nil, fmt.Errorf("failed to bind db password env var: %w", err)
+	}
+	if err := v.BindEnv("watermark_lag", EnvWatermarkLag); err != nil {
+		return nil, fmt.Errorf("failed to bind watermark lag env var: %w", err)
 	}
 
 	// S3 environment variable bindings
@@ -76,6 +80,7 @@ func FromCommand(cmd *cobra.Command) (*Config, error) {
 	v.SetDefault("verbose", false)
 	v.SetDefault("connect_timeout", DefaultConnectTimeoutSecs*time.Second)
 	v.SetDefault("query_timeout", DefaultQueryTimeoutSecs*time.Second)
+	v.SetDefault("watermark_lag", DefaultWatermarkLagSecs*time.Second)
 
 	// S3 defaults
 	// No defaults - using AWS SDK default region and credential chain
@@ -89,6 +94,7 @@ func FromCommand(cmd *cobra.Command) (*Config, error) {
 	// Set durations from duration flags
 	result.ConnectTimeout = v.GetDuration("connect_timeout")
 	result.QueryTimeout = v.GetDuration("query_timeout")
+	result.WatermarkLag = v.GetDuration("watermark_lag")
 
 	return result, nil
 }

@@ -68,6 +68,7 @@ func init() {
 	rootCmd.PersistentFlags().Bool("verbose", false, "Enable verbose logging")
 	rootCmd.PersistentFlags().Duration("connect-timeout", config.DefaultConnectTimeoutSecs*time.Second, "Connection timeout")
 	rootCmd.PersistentFlags().Duration("query-timeout", config.DefaultQueryTimeoutSecs*time.Second, "Query timeout")
+	rootCmd.PersistentFlags().Duration("watermark-lag", config.DefaultWatermarkLagSecs*time.Second, "Delay the Oracle watermark to allow recent transactions to commit")
 
 	// S3 flags
 	rootCmd.PersistentFlags().String("s3-bucket", "", "S3 bucket name")

@@ -41,6 +41,9 @@ func (c *Config) Validate() error {
 	if c.QueryTimeout < time.Second || c.QueryTimeout > 24*time.Hour {
 		return fmt.Errorf("query_timeout must be between 1s and 24h")
 	}
+	if c.WatermarkLag < 0 {
+		return fmt.Errorf("watermark_lag must not be negative")
+	}
 
 	// Validate days_back
 	if c.DefaultDaysBack < 0 || c.DefaultDaysBack > 3650 {

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -9,15 +10,16 @@ import (
 
 // S3Config holds S3 destination configuration
 type S3Config struct {
-	Bucket        string        `mapstructure:"s3_bucket"`
-	Prefix        string        `mapstructure:"s3_prefix"`
-	AccessKey     string        `mapstructure:"s3_access_key"`
-	SecretKey     string        `mapstructure:"s3_secret_key"`
-	SessionToken  string        `mapstructure:"s3_session_token"`
-	Endpoint      string        `mapstructure:"s3_endpoint"` // For MinIO, Wasabi, etc.
-	UploadTimeout time.Duration `mapstructure:"-"`
-	PartSize      int64         `mapstructure:"s3_part_size"`
-	Concurrency   int           `mapstructure:"s3_concurrency"`
+	Bucket                string        `mapstructure:"s3_bucket"`
+	Prefix                string        `mapstructure:"s3_prefix"`
+	AccessKey             string        `mapstructure:"s3_access_key"`
+	SecretKey             string        `mapstructure:"s3_secret_key"`
+	SessionToken          string        `mapstructure:"s3_session_token"`
+	Endpoint              string        `mapstructure:"s3_endpoint"` // For MinIO, Wasabi, etc.
+	UploadTimeout         time.Duration `mapstructure:"-"`
+	PartSize              int64         `mapstructure:"s3_part_size"`
+	Concurrency           int           `mapstructure:"s3_concurrency"`
+	AllowInsecureEndpoint bool          `mapstructure:"s3_allow_insecure_endpoint"`
 }
 
 // Validate checks if S3 configuration is valid
@@ -42,6 +44,18 @@ func (c *S3Config) Validate() error {
 	}
 	if c.Concurrency < 1 || c.Concurrency > 100 {
 		return fmt.Errorf("s3_concurrency must be between 1 and 100")
+	}
+	if c.Endpoint != "" {
+		endpoint, err := url.Parse(c.Endpoint)
+		if err != nil || !endpoint.IsAbs() || endpoint.Hostname() == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
+			return fmt.Errorf("s3_endpoint must be an absolute HTTP(S) URL with a host")
+		}
+		if endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+			return fmt.Errorf("s3_endpoint must not contain userinfo, query parameters, or fragments")
+		}
+		if endpoint.Scheme == "http" && !c.AllowInsecureEndpoint {
+			return fmt.Errorf("s3_endpoint must use HTTPS unless s3_allow_insecure_endpoint is enabled")
+		}
 	}
 
 	// Clean up prefix - ensure it doesn't start/end with slash

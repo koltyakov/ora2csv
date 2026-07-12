@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
-	if c.DBUser == "" {
+	if strings.TrimSpace(c.DBUser) == "" {
 		return fmt.Errorf("db_user is required")
 	}
 	if c.DBPassword == "" {

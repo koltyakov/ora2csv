@@ -42,6 +42,33 @@ func TestS3Config_Validate(t *testing.T) {
 		})
 	}
 
+	t.Run("HTTPS endpoint is valid", func(t *testing.T) {
+		cfg := S3Config{Bucket: "test", Endpoint: "https://minio.example.com"}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate() error: %v", err)
+		}
+	})
+
+	t.Run("HTTP endpoint requires opt-in", func(t *testing.T) {
+		cfg := S3Config{Bucket: "test", Endpoint: "http://localhost:9000"}
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("Validate() error = nil, want insecure endpoint error")
+		}
+		cfg.AllowInsecureEndpoint = true
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate() with opt-in error: %v", err)
+		}
+	})
+
+	for _, endpoint := range []string{"localhost:9000", "ftp://example.com", "https:///missing", "https://user@example.com", "https://example.com?query=1", "https://example.com#fragment"} {
+		t.Run("invalid endpoint "+endpoint, func(t *testing.T) {
+			cfg := S3Config{Bucket: "test", Endpoint: endpoint}
+			if err := cfg.Validate(); err == nil {
+				t.Fatal("Validate() error = nil, want endpoint validation error")
+			}
+		})
+	}
+
 	t.Run("normalizes prefix with leading slash", func(t *testing.T) {
 		cfg := &S3Config{
 			Bucket: "test-bucket",

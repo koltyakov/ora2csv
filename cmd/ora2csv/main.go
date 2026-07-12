@@ -82,6 +82,7 @@ func newRootCommand(commandVersion, commandBuildTime string) *cobra.Command {
 	root.PersistentFlags().Duration("s3-upload-timeout", config.DefaultS3UploadTimeoutSecs*time.Second, "S3 upload timeout")
 	root.PersistentFlags().Int64("s3-part-size", config.DefaultS3PartSize, "S3 multipart part size in bytes")
 	root.PersistentFlags().Int("s3-concurrency", config.DefaultS3Concurrency, "S3 multipart upload concurrency")
+	root.PersistentFlags().Bool("s3-allow-insecure-endpoint", false, "Allow a plaintext HTTP S3-compatible endpoint")
 
 	// Validate-specific flags
 	validate.Flags().Bool("test-connection", false, "Test database connection")

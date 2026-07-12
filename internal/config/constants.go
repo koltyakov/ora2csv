@@ -5,7 +5,7 @@ const (
 	DefaultDBHost             = "dbserver"
 	DefaultDBPort             = 1521
 	DefaultDBService          = "ORCL"
-	DefaultDBUser             = "system"
+	DefaultDBUser             = ""
 	DefaultStateFile          = "./state.json"
 	DefaultSQLDir             = "./sql"
 	DefaultExportDir          = "./export"
@@ -39,4 +39,5 @@ const (
 	EnvS3UploadTimeout = "ORA2CSV_S3_UPLOAD_TIMEOUT"
 	EnvS3PartSize      = "ORA2CSV_S3_PART_SIZE"
 	EnvS3Concurrency   = "ORA2CSV_S3_CONCURRENCY"
+	EnvS3AllowInsecure = "ORA2CSV_S3_ALLOW_INSECURE_ENDPOINT"
 )

@@ -106,6 +106,14 @@ func TestConfig_Validate(t *testing.T) {
 		}
 	})
 
+	t.Run("whitespace db_user", func(t *testing.T) {
+		cfg := *validCfg
+		cfg.DBUser = "   "
+		if err := cfg.Validate(); err == nil {
+			t.Error("expected error for whitespace db_user")
+		}
+	})
+
 	t.Run("missing db_password", func(t *testing.T) {
 		cfg := *validCfg
 		cfg.DBPassword = ""

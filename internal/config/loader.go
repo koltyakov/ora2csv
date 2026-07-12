@@ -41,6 +41,7 @@ func FromCommand(cmd *cobra.Command) (*Config, error) {
 		{"s3-upload-timeout", "s3_upload_timeout"},
 		{"s3-part-size", "s3_part_size"},
 		{"s3-concurrency", "s3_concurrency"},
+		{"s3-allow-insecure-endpoint", "s3_allow_insecure_endpoint"},
 	}
 
 	for _, f := range flags {
@@ -82,6 +83,9 @@ func FromCommand(cmd *cobra.Command) (*Config, error) {
 	if err := v.BindEnv("s3_concurrency", EnvS3Concurrency); err != nil {
 		return nil, fmt.Errorf("failed to bind S3 concurrency env var: %w", err)
 	}
+	if err := v.BindEnv("s3_allow_insecure_endpoint", EnvS3AllowInsecure); err != nil {
+		return nil, fmt.Errorf("failed to bind insecure S3 endpoint env var: %w", err)
+	}
 
 	// Set defaults from config package
 	v.SetDefault("db_host", DefaultDBHost)
@@ -101,6 +105,7 @@ func FromCommand(cmd *cobra.Command) (*Config, error) {
 	v.SetDefault("s3_upload_timeout", DefaultS3UploadTimeoutSecs*time.Second)
 	v.SetDefault("s3_part_size", DefaultS3PartSize)
 	v.SetDefault("s3_concurrency", DefaultS3Concurrency)
+	v.SetDefault("s3_allow_insecure_endpoint", false)
 
 	// S3 defaults
 	// No defaults - using AWS SDK default region and credential chain

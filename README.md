@@ -85,7 +85,7 @@ Download the latest release from [Releases](https://github.com/koltyakov/ora2csv
 | `ORA2CSV_DB_HOST`       | Database host         | `dbserver`     |
 | `ORA2CSV_DB_PORT`       | Database port         | `1521`         |
 | `ORA2CSV_DB_SERVICE`    | Database service name | `ORCL`         |
-| `ORA2CSV_DB_USER`       | Database user         | `system`       |
+| `ORA2CSV_DB_USER`       | Database user         | _required_     |
 | `ORA2CSV_STATE_FILE`    | Path to state.json    | `./state.json` |
 | `ORA2CSV_SQL_DIR`       | Path to SQL files     | `./sql`        |
 | `ORA2CSV_EXPORT_DIR`    | Path for output CSVs  | `./export`     |
@@ -109,7 +109,7 @@ Flags:
   --db-host string          Database host (default "dbserver")
   --db-port int             Database port (default 1521)
   --db-service string       Database service name (default "ORCL")
-  --db-user string          Database user (default "system")
+  --db-user string          Database user (required)
   --state-file string       Path to state.json (default "./state.json")
   --sql-dir string          Path to SQL directory (default "./sql")
   --export-dir string       Path to export directory (default "./export")
@@ -124,6 +124,7 @@ Flags:
   --s3-upload-timeout duration S3 upload timeout (default 5m)
   --s3-part-size int        S3 multipart part size in bytes (default 5242880)
   --s3-concurrency int      S3 multipart upload concurrency (default 5)
+  --s3-allow-insecure-endpoint Allow a plaintext HTTP S3-compatible endpoint
   --s3-access-key string    S3 access key (for S3-compatible services)
   --s3-secret-key string    S3 secret key (for S3-compatible services)
   --s3-session-token string S3 session token (for S3-compatible services)

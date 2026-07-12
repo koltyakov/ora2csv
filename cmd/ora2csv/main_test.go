@@ -42,10 +42,12 @@ func TestRunExport_DryRunHasNoRemoteOrFilesystemSideEffects(t *testing.T) {
 		"--sql-dir", sqlDir,
 		"--export-dir", exportDir,
 		"--dry-run",
+		"--db-user", "test-user",
 		"--s3-bucket", "test-bucket",
 		"--s3-endpoint", server.URL,
 		"--s3-access-key", "test-key",
 		"--s3-secret-key", "test-secret",
+		"--s3-allow-insecure-endpoint",
 	})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute() error: %v", err)

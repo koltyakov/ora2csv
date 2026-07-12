@@ -31,10 +31,11 @@ func TestNewS3Client(t *testing.T) {
 
 	t.Run("valid config with custom endpoint", func(t *testing.T) {
 		cfg := &config.S3Config{
-			Bucket:    "test-bucket",
-			AccessKey: "test-key",
-			SecretKey: "test-secret",
-			Endpoint:  "http://localhost:9000",
+			Bucket:                "test-bucket",
+			AccessKey:             "test-key",
+			SecretKey:             "test-secret",
+			Endpoint:              "http://localhost:9000",
+			AllowInsecureEndpoint: true,
 		}
 
 		client, err := NewS3Client(cfg)
@@ -46,6 +47,13 @@ func TestNewS3Client(t *testing.T) {
 		}
 		if client.uploader.PartSize != config.DefaultS3PartSize || client.uploader.Concurrency != config.DefaultS3Concurrency {
 			t.Fatalf("uploader settings = (%d, %d)", client.uploader.PartSize, client.uploader.Concurrency)
+		}
+	})
+
+	t.Run("rejects insecure custom endpoint without opt-in", func(t *testing.T) {
+		_, err := NewS3Client(&config.S3Config{Bucket: "test-bucket", Endpoint: "http://localhost:9000"})
+		if err == nil {
+			t.Fatal("NewS3Client() error = nil, want insecure endpoint error")
 		}
 	})
 }
@@ -62,10 +70,11 @@ func TestS3Client_CheckConnectionIsReadOnly(t *testing.T) {
 	defer server.Close()
 
 	client, err := NewS3Client(&config.S3Config{
-		Bucket:    "test-bucket",
-		Endpoint:  server.URL,
-		AccessKey: "test-key",
-		SecretKey: "test-secret",
+		Bucket:                "test-bucket",
+		Endpoint:              server.URL,
+		AccessKey:             "test-key",
+		SecretKey:             "test-secret",
+		AllowInsecureEndpoint: true,
 	})
 	if err != nil {
 		t.Fatalf("NewS3Client() error: %v", err)
@@ -87,7 +96,7 @@ func TestS3Client_StateVersioning(t *testing.T) {
 			_, _ = w.Write([]byte(`[]`))
 		}))
 		defer server.Close()
-		client, err := NewS3Client(&config.S3Config{Bucket: "test-bucket", Endpoint: server.URL, AccessKey: "key", SecretKey: "secret"})
+		client, err := NewS3Client(&config.S3Config{Bucket: "test-bucket", Endpoint: server.URL, AccessKey: "key", SecretKey: "secret", AllowInsecureEndpoint: true})
 		if err != nil {
 			t.Fatalf("NewS3Client() error: %v", err)
 		}
@@ -121,7 +130,7 @@ func TestS3Client_StateVersioning(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			}))
 			defer server.Close()
-			client, err := NewS3Client(&config.S3Config{Bucket: "test-bucket", Endpoint: server.URL, AccessKey: "key", SecretKey: "secret"})
+			client, err := NewS3Client(&config.S3Config{Bucket: "test-bucket", Endpoint: server.URL, AccessKey: "key", SecretKey: "secret", AllowInsecureEndpoint: true})
 			if err != nil {
 				t.Fatalf("NewS3Client() error: %v", err)
 			}
@@ -142,7 +151,7 @@ func TestS3Client_StateVersioning(t *testing.T) {
 			_, _ = w.Write([]byte(`<Error><Code>PreconditionFailed</Code><Message>conflict</Message></Error>`))
 		}))
 		defer server.Close()
-		client, err := NewS3Client(&config.S3Config{Bucket: "test-bucket", Endpoint: server.URL, AccessKey: "key", SecretKey: "secret"})
+		client, err := NewS3Client(&config.S3Config{Bucket: "test-bucket", Endpoint: server.URL, AccessKey: "key", SecretKey: "secret", AllowInsecureEndpoint: true})
 		if err != nil {
 			t.Fatalf("NewS3Client() error: %v", err)
 		}

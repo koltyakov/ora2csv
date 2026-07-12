@@ -50,7 +50,8 @@ ora2csv export \
   --s3-bucket=exports \
   --s3-endpoint=https://minio.example.com \
   --s3-access-key=minioadmin \
-  --s3-secret-key=minioadmin
+  --s3-secret-key=minioadmin \
+  --s3-allow-insecure-endpoint
 ```
 
 ## Configuration
@@ -68,6 +69,7 @@ ora2csv export \
 | `--s3-upload-timeout` | Maximum duration per S3 upload                 | `5m`              |
 | `--s3-part-size`      | Multipart part size in bytes                   | `5242880`         |
 | `--s3-concurrency`    | Multipart upload concurrency                   | `5`               |
+| `--s3-allow-insecure-endpoint` | Allow a plaintext HTTP endpoint       | `false`           |
 
 ### Environment Variables
 
@@ -81,6 +83,7 @@ ora2csv export \
 | `AWS_SESSION_TOKEN`     | AWS session token (standard) |
 | `AWS_REGION`            | AWS region (standard)        |
 | `AWS_PROFILE`           | AWS profile name (standard)  |
+| `ORA2CSV_S3_ALLOW_INSECURE_ENDPOINT` | Permit plaintext HTTP custom endpoints |
 
 ### IAM Permissions
 
@@ -169,7 +172,8 @@ ora2csv export \
   --s3-bucket=exports \
   --s3-endpoint=http://localhost:9000 \
   --s3-access-key=minioadmin \
-  --s3-secret-key=minioadmin
+  --s3-secret-key=minioadmin \
+  --s3-allow-insecure-endpoint
 ```
 
 ### Using aws-vault
